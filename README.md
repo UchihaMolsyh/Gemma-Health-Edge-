@@ -200,8 +200,8 @@ To prove our local-first thesis, we empirically benchmarked the pipeline across 
 - Molor Davaa — Solo developer for this project
 
 **Special Thanks**  
-- Google DeepMind — For Gemma 4 AI model  
-- Georgi Gerganov & the llama.cpp community  
+- Google DeepMind & Unsloth community — For Gemma 4 AI model  
+- Georgi Gerganov & the llama.cpp community
 - Utsav Dey, Adil Shamim, and Palak Jain for their open datasets
 - Real Drug Dataset & FINAL FOOD DATASET (Groups 1-5)
 
@@ -212,4 +212,4 @@ This project is licensed under the [MIT License](LICENSE).
 
 *"Making private, offline health information accessible to everyone."*
 
-> ⚠️ **Medical Disclaimer:** Gemma Health Edge provides information only — it is not a substitute for professional medical advice. Always consult a qualified healthcare professional. In an emergency, call your local emergency services immediately.
+> ⚠️ **Disclaimers:** Gemma Health Edge provides health information only — not medical advice. Always consult a qualified healthcare professional. In emergencies, call local services immediately. This Phone and PC app has a API key powered variation and if you use API key powered variation, it'll be no longer 100% local and private. This AI model has low hallucination risk but never zero. Don't trust everything this AI model say. No matter what, consulting a qualified healthcare professional is better and trustworthy choice. 
