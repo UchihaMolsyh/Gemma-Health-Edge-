@@ -194,3 +194,5 @@ To prove our local-first thesis, we empirically benchmarked the pipeline across 
 ---
 
 > ⚠️ **Medical Disclaimer:** Gemma Health Edge provides information only — it is not a substitute for professional medical advice. Always consult a qualified healthcare professional. In an emergency, call your local emergency number (911 / 999 / 112 / 000).
+#   G e m m a - H e a l t h - E d g e -  
+ 
