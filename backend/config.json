@@ -1,0 +1,11 @@
+{
+  "web_port": 8080,
+  "server_port": 8081,
+  "model": "gemma-4-E4B-it-Q4_K_M.gguf",
+  "model_filename": "gemma-4-E4B-it-Q4_K_M.gguf",
+  "mmproj_filename": "mmproj-gemma-4-E4B-it-bf16.gguf",
+  "llama_server_path": "llama-server/llama-server.exe",
+  "require_local_model": true,
+  "context_size": 32768,
+  "hf_repo": "unsloth/gemma-4-E4B-it-GGUF"
+}

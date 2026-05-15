@@ -1,0 +1,473 @@
+================================================================================
+FILE: README.md
+================================================================================
+# Gemma Health Edge (Flutter)
+
+A **mobile health companion** that runs on your phone and can chat with:
+
+- A **local** (or tunneled) OpenAI-compatible server (for example `llama-server` on your PC)
+- A **cloud model provider** via **OpenRouter** (API key required)
+
+This repo contains the full Flutter app for **Android + iOS**, including:
+
+- **Streaming chat UI**
+- **Image input** (gallery / camera)
+- **Voice input** (speech-to-text) and **voice output** (TTS)
+- **Local RAG** over CSV datasets in `assets/datasets/`
+- **Watch / wearable metrics** (via HealthKit / Health Connect, plus optional BLE)
+- **Health calendar** (lightweight tracking stored locally)
+- **7-language-ready localization** (Flutter `generate: true`)
+
+> Medical disclaimer: This app provides **general health information only** and is **not** a substitute for professional medical advice, diagnosis, or treatment.
+
+---
+
+## Why this is "Edge"
+
+Gemma Health Edge is designed around a simple idea:
+
+- The **phone app** is the fast, friendly, sensor-adjacent interface.
+- The app can use a **local runtime** (PC on LAN / USB tethering / tunnel) *or* a **cloud provider** (OpenRouter).
+- Your **local knowledge** (CSV datasets) stays on-device and can be injected as context.
+
+---
+
+## Project structure
+
+```text
+gemma_health_edge/
+├── android/                 # Android host project
+├── ios/                     # iOS host project
+├── assets/
+│   └── datasets/            # Offline CSV datasets for local RAG
+├── lib/
+│   ├── main.dart            # App entry, theme, routing
+│   ├── core/                # API client, RAG, storage, i18n glue
+│   ├── features/            # Chat, settings, calendar
+│   └── widgets/             # Reusable UI pieces (voice, image picker, etc.)
+└── pubspec.yaml
+```
+
+Key packages (see `pubspec.yaml`):
+
+- **State**: `flutter_riverpod`
+- **Storage**: `hive`, `shared_preferences`, `flutter_secure_storage`
+- **Network**: `http`
+- **Media**: `image_picker`, `permission_handler`
+- **Voice**: `speech_to_text`, `flutter_tts`
+- **UI**: `flutter_markdown`, `google_fonts`, `flutter_colorpicker`
+- **Routing**: `go_router`
+- **Utilities**: `csv`, `connectivity_plus`, `intl`
+
+---
+
+## How the app talks to the model
+
+The chat runtime is OpenAI-compatible. In code, requests are sent to:
+
+- **Local server mode**: `POST {serverUrl}/v1/chat/completions`
+- **Cloud mode (OpenRouter)**: `POST https://openrouter.ai/api/v1/chat/completions`
+
+The app supports:
+
+- **Token streaming** (SSE)
+- **Text + image prompts** (image is base64-encoded; support depends on the selected model/provider)
+
+---
+
+## Connection options
+
+### Option A: Local server on the same Wi‑Fi / LAN
+
+1. Start your server on the PC with host bound to all interfaces (e.g. `0.0.0.0`).
+2. Find the PC's LAN IP.
+3. In the app settings, set server URL to something like:
+
+```text
+http://192.168.x.x:8080
+```
+
+### Option B: USB tethering (low latency, no Wi‑Fi)
+
+1. Enable **USB tethering** on Android.
+2. Point the app at the tether gateway IP/port used by your setup.
+
+### Option C: Tunnel (remote access)
+
+If you run a tunnel (e.g. Cloudflare Tunnel) in front of your server, you can use the HTTPS URL in the app.
+
+### Option D: Cloud API (OpenRouter — no PC required)
+
+1. Enable `Use Cloud API (No PC)` in Settings.
+2. Paste your **OpenRouter API key**.
+3. Choose a **Model ID** (default in code is `google/gemma-2-27b-it`).
+
+---
+
+## Local RAG (CSV datasets)
+
+The app ships with CSV files under `assets/datasets/` (for example: `conditions.csv`).
+
+At runtime:
+
+- The CSVs are **loaded from app assets**
+- A **keyword/substring retrieval** step selects relevant rows
+- The retrieved snippets are injected into the prompt as context
+
+This gives you:
+
+- **Faster** answers for common topics
+- **Local context injection** even if you're using a cloud model
+
+Note: the **model response still requires a reachable model backend** (local server or cloud). The CSV retrieval itself is local, but it does not replace the model.
+
+---
+
+## Build & run
+
+### Prerequisites
+
+- Flutter SDK: **3.19+**
+- Dart SDK: **3.3+**
+- Android Studio (Android) and/or Xcode (iOS)
+
+### Install dependencies
+
+```bash
+flutter pub get
+```
+
+### Run on a device
+
+```bash
+flutter run
+```
+
+### Build release
+
+Android:
+
+```bash
+flutter build apk
+```
+
+iOS (requires macOS + Xcode):
+
+```bash
+flutter build ios
+```
+
+---
+
+## Permissions
+
+Depending on which features you use, the app may request:
+
+- **Microphone** (voice input)
+- **Speech recognition** (voice input)
+- **Camera** (camera capture)
+- **Photos** (gallery picker)
+- **Health data access** (HealthKit on iOS, Health Connect on Android)
+- **Bluetooth** (optional: direct BLE device mode)
+
+If a feature silently fails on-device, check that the permission has been granted in OS settings.
+
+---
+
+## Watch & wearable metrics
+
+The app includes a **Health Metrics** screen (`/health`) that can read and store wearable/device measurements.
+
+### Mode 1: OS health store (recommended)
+
+This is the most compatible approach.
+
+- **iOS**: reads from **Apple Health / HealthKit** (Apple Watch typically syncs here)
+- **Android**: reads from **Health Connect** (Wear OS / vendor apps typically sync here)
+
+Supported types (best-effort depending on what your device provides):
+
+- Steps
+- Heart rate
+- Blood oxygen (SpO₂)
+- Blood pressure (systolic/diastolic)
+
+### Mode 2: Direct Bluetooth LE (optional)
+
+You can also connect directly to BLE devices that expose **standard GATT services**:
+
+- Heart Rate Service (`0x180D`)
+- Blood Pressure Service (`0x1810`)
+- Pulse Oximeter Service (`0x1822`)
+
+This mode is **not guaranteed** to work with every smartwatch because many watches use proprietary protocols.
+
+### Storage
+
+All collected measurements are stored **locally on the phone** (Hive box `health_metrics`).
+
+---
+
+## Privacy & data storage
+
+Designed to be conservative by default:
+
+- **Local storage** is used for sessions, settings, and calendar data.
+- The server URL / cloud mode is user-controlled.
+- The **OpenRouter API key** is stored using `flutter_secure_storage` (Keychain on iOS, EncryptedSharedPreferences on Android).
+- When "research" is enabled, the app may call Wikipedia for summaries.
+
+If you plan to use a tunnel/public URL or cloud mode, treat it like exposing a private health interface:
+
+- Prefer authenticated tunnels / access control.
+- Avoid logging prompts/responses on the server.
+
+---
+
+## Troubleshooting
+
+### The app cannot connect to the server
+
+- Verify the server is reachable from the phone (same Wi‑Fi / tethering).
+- Make sure the server binds to `0.0.0.0` (not `127.0.0.1`).
+- Confirm the URL includes the correct port.
+
+### Streaming responses don't appear
+
+- Confirm your server supports streaming for `/v1/chat/completions`.
+- Try non-stream mode (if you have a toggle) to isolate the issue.
+
+### Images don't get processed
+
+- Your server/model must support multimodal input.
+- Verify the server's expected payload format for image content.
+
+---
+
+## Roadmap ideas (optional)
+
+- Stronger retrieval (scoring, stemming, synonyms)
+- Dataset versioning + update channel
+- On-device fallback model for "no server available" mode
+- Health calendar exports (CSV/ICS)
+- Safer prompt templates (red flags, escalation guidance)
+
+---
+
+## License
+
+Add your license here if/when you decide to open-source the project.
+
+================================================================================
+FILE: web/manifest.json
+================================================================================
+{
+    "name": "gemma_health_edge",
+    "short_name": "gemma_health_edge",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0175C2",
+    "theme_color": "#0175C2",
+    "description": "A new Flutter project.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
+
+================================================================================
+FILE: ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
+================================================================================
+{
+  "images" : [
+    {
+      "size" : "20x20",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-20x20@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "20x20",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-20x20@3x.png",
+      "scale" : "3x"
+    },
+    {
+      "size" : "29x29",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-29x29@1x.png",
+      "scale" : "1x"
+    },
+    {
+      "size" : "29x29",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-29x29@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "29x29",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-29x29@3x.png",
+      "scale" : "3x"
+    },
+    {
+      "size" : "40x40",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-40x40@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "40x40",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-40x40@3x.png",
+      "scale" : "3x"
+    },
+    {
+      "size" : "60x60",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-60x60@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "60x60",
+      "idiom" : "iphone",
+      "filename" : "Icon-App-60x60@3x.png",
+      "scale" : "3x"
+    },
+    {
+      "size" : "20x20",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-20x20@1x.png",
+      "scale" : "1x"
+    },
+    {
+      "size" : "20x20",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-20x20@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "29x29",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-29x29@1x.png",
+      "scale" : "1x"
+    },
+    {
+      "size" : "29x29",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-29x29@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "40x40",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-40x40@1x.png",
+      "scale" : "1x"
+    },
+    {
+      "size" : "40x40",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-40x40@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "76x76",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-76x76@1x.png",
+      "scale" : "1x"
+    },
+    {
+      "size" : "76x76",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-76x76@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "83.5x83.5",
+      "idiom" : "ipad",
+      "filename" : "Icon-App-83.5x83.5@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "size" : "1024x1024",
+      "idiom" : "ios-marketing",
+      "filename" : "Icon-App-1024x1024@1x.png",
+      "scale" : "1x"
+    }
+  ],
+  "info" : {
+    "version" : 1,
+    "author" : "xcode"
+  }
+}
+
+================================================================================
+FILE: ios/Runner/Assets.xcassets/LaunchImage.imageset/Contents.json
+================================================================================
+{
+  "images" : [
+    {
+      "idiom" : "universal",
+      "filename" : "LaunchImage.png",
+      "scale" : "1x"
+    },
+    {
+      "idiom" : "universal",
+      "filename" : "LaunchImage@2x.png",
+      "scale" : "2x"
+    },
+    {
+      "idiom" : "universal",
+      "filename" : "LaunchImage@3x.png",
+      "scale" : "3x"
+    }
+  ],
+  "info" : {
+    "version" : 1,
+    "author" : "xcode"
+  }
+}
+
+================================================================================
+FILE: android/gradle/wrapper/gradle-wrapper.properties
+================================================================================
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.14-all.zip
+
+================================================================================
+FILES SKIPPED (blocked by .gitignore):
+================================================================================
+- ios/Flutter/flutter_export_environment.sh (blocked by ios/.gitignore)
+- android/gradlew.bat (blocked by android/.gitignore)
+- android/local.properties (blocked by android/.gitignore)
+
+These files are typically environment-specific or generated files that are not tracked in version control.
+
+================================================================================
+END OF OTHER CONSOLIDATED FILE
+================================================================================

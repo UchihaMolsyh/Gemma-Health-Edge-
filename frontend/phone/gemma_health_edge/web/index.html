@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html data-theme="dark">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Gemma Health Edge — Privacy-first offline health AI">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Gemma Health Edge">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <!-- Google Fonts - Noto Sans to match PC -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <title>Gemma Health Edge</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    /* ============================================================
+       Gemma Health Edge — Phone Web Build Styles
+       Matches PC Frontend Design System
+       ============================================================ */
+
+    /* ── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      height: 100%;
+      font-size: 16px;
+    }
+
+    body {
+      height: 100%;
+      font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow: hidden;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      line-height: 1.5;
+    }
+
+    /* ── Design Tokens (Matching PC Frontend) ───────────────────── */
+    :root, [data-theme="dark"] {
+      /* Flutter Dark Theme Colors */
+      --bg-base: #0F172A;
+      --bg-surface: #1E293B;
+      --bg-elevated: #263348;
+      --bg-hover: rgba(255, 255, 255, 0.05);
+      --bg-active: rgba(255, 255, 255, 0.08);
+
+      --border: rgba(255, 255, 255, 0.1);
+      --border-strong: rgba(255, 255, 255, 0.15);
+
+      --text-primary: rgba(255, 255, 255, 0.92);
+      --text-secondary: #94A3B8;
+      --text-tertiary: #64748B;
+      --text-inverse: #0F172A;
+
+      /* Accent Colors */
+      --accent-1: #3B82F6;
+      --accent-2: #06B6D4;
+      --accent-3: #8B5CF6;
+      --accent-1-dim: rgba(59, 130, 246, 0.12);
+
+      /* Status Colors */
+      --accent-warn: #F59E0B;
+      --accent-success: #10B981;
+      --accent-danger: #EF4444;
+
+      /* Shadows */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+      --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+
+      /* Radius */
+      --radius-sm: 8px;
+      --radius: 12px;
+      --radius-lg: 16px;
+      --radius-xl: 20px;
+    }
+
+    [data-theme="light"] {
+      /* Flutter Light Theme Colors */
+      --bg-base: #F8FAFC;
+      --bg-surface: #FFFFFF;
+      --bg-elevated: #F1F5F9;
+      --bg-hover: rgba(0, 0, 0, 0.03);
+      --bg-active: rgba(0, 0, 0, 0.05);
+
+      --border: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(0, 0, 0, 0.12);
+
+      --text-primary: rgba(0, 0, 0, 0.87);
+      --text-secondary: #475569;
+      --text-tertiary: #64748B;
+      --text-inverse: #FFFFFF;
+
+      --accent-1: #3B82F6;
+      --accent-2: #0891B2;
+      --accent-3: #7C3AED;
+      --accent-1-dim: rgba(59, 130, 246, 0.1);
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.08);
+      --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    /* ── Flutter Container Styles ──────────────────────────────── */
+    #flutter-container {
+      width: 100%;
+      height: 100%;
+      background: var(--bg-base);
+    }
+
+    /* ── Loading Indicator ─────────────────────────────────────── */
+    .flutter-loader {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg-base);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.3s ease, visibility 0.3s ease;
+    }
+
+    .flutter-loader.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    /* App Logo Animation */
+    .loader-logo {
+      width: 80px;
+      height: 80px;
+      margin-bottom: 24px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .loader-logo svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.05); opacity: 0.8; }
+    }
+
+    /* Loading Text */
+    .loader-text {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 16px;
+    }
+
+    /* Progress Bar */
+    .loader-progress {
+      width: 200px;
+      height: 4px;
+      background: var(--bg-elevated);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .loader-progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+      border-radius: 2px;
+      transition: width 0.3s ease;
+      animation: progress 2s ease-in-out infinite;
+    }
+
+    @keyframes progress {
+      0% { width: 0%; margin-left: 0%; }
+      50% { width: 70%; margin-left: 15%; }
+      100% { width: 0%; margin-left: 100%; }
+    }
+
+    /* Status Text */
+    .loader-status {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-top: 12px;
+    }
+
+    /* ── Accessibility ──────────────────────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+      .loader-logo { animation: none; }
+      .loader-progress-bar { animation: none; }
+    }
+
+    /* ── Mobile Optimizations ──────────────────────────────────── */
+    @media (max-width: 600px) {
+      body {
+        font-size: 15px;
+      }
+    }
+
+    /* Safe area insets for notched devices */
+    @supports (padding-top: env(safe-area-inset-top)) {
+      #flutter-container {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Loading Screen -->
+  <div id="flutter-loader" class="flutter-loader">
+    <div class="loader-logo">
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#4285f4"/>
+            <stop offset="50%" style="stop-color:#6ea8fe"/>
+            <stop offset="100%" style="stop-color:#fbbc04"/>
+          </linearGradient>
+        </defs>
+        <path d="M50 5 L92 22 L86 62 Q80 88 50 96 Q20 88 14 62 L8 22 Z" fill="url(#logoGrad)"/>
+        <path d="M50 30 L50 70 M30 50 L70 50" stroke="white" stroke-width="8" stroke-linecap="round"/>
+        <circle cx="50" cy="50" r="15" fill="none" stroke="white" stroke-width="2" opacity="0.6"/>
+      </svg>
+    </div>
+    <div class="loader-text">Gemma Health Edge</div>
+    <div class="loader-progress">
+      <div class="loader-progress-bar"></div>
+    </div>
+    <div class="loader-status">Loading...</div>
+  </div>
+
+  <!-- Flutter Container -->
+  <div id="flutter-container"></div>
+
+  <!-- Flutter Bootstrap -->
+  <script src="flutter_bootstrap.js" async></script>
+
+  <script>
+    // Hide loader when Flutter is ready
+    window.addEventListener('flutter-first-frame', function() {
+      const loader = document.getElementById('flutter-loader');
+      if (loader) {
+        loader.classList.add('hidden');
+        setTimeout(() => loader.remove(), 300);
+      }
+    });
+
+    // Theme sync with Flutter
+    window.syncTheme = function(isDark) {
+      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    };
+  </script>
+</body>
+</html>

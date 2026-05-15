@@ -1,0 +1,41 @@
+{
+  "env": {
+    "browser": true,
+    "es2021": true,
+    "node": true
+  },
+  "extends": [
+    "eslint:recommended"
+  ],
+  "parserOptions": {
+    "ecmaVersion": "latest",
+    "sourceType": "module"
+  },
+"rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-console": "off",
+    "prefer-const": "off",
+    "no-var": "off",
+    "eqeqeq": ["error", "always"],
+    "curly": "off",
+    "no-undef": "error",
+    "semi": ["error", "always"],
+    "quotes": "off",
+    "no-control-regex": "off",
+    "no-constant-condition": "warn",
+    "no-empty": "off",
+    "no-misleading-character-class": "off"
+  },
+  "globals": {
+    "App": "readonly",
+    "Storage": "readonly",
+    "Settings": "readonly",
+    "RAG": "readonly",
+    "I18n": "readonly",
+    "Calendar": "readonly",
+    "ErrorHandler": "readonly",
+    "Validator": "readonly",
+    "Telemetry": "readonly",
+    "GemmaAPI": "readonly"
+  }
+}

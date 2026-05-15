@@ -1,0 +1,12 @@
+{
+  "theme": "auto",
+  "accent1": "#3b82f6",
+  "accent2": "#06b6d4",
+  "accent3": "#8b5cf6",
+  "disclaimerAccepted": false,
+  "lang": "en",
+  "showThinking": true,
+  "enableCamera": false,
+  "enableResearch": true,
+  "enableVoice": false
+}

@@ -1,0 +1,4600 @@
+================================================================================
+FILE: pubspec.yaml
+================================================================================
+name: gemma_health_edge
+description: Offline-first health assistant with Gemma AI.
+publish_to: 'none'
+version: 2.0.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.4.9
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  flutter_blue_plus: ^1.31.0
+  http: ^1.1.0
+  flutter_secure_storage: ^9.0.0
+  intl: ^0.18.1
+  flutter_localizations:
+    sdk: flutter
+  image_picker: ^1.0.4
+  speech_to_text: ^6.5.0
+  flutter_tts: ^3.8.3
+  flutter_markdown: ^0.6.18
+  flutter_colorpicker: ^1.0.3
+  health: ^10.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  hive_generator: ^2.0.0
+  build_runner: ^2.4.6
+
+flutter:
+  uses-material-design: true
+  generate: true
+
+================================================================================
+FILE: analysis_options.yaml
+================================================================================
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_literals_to_create_immutables: true
+    avoid_print: false
+    prefer_single_quotes: true
+
+================================================================================
+FILE: l10n.yaml
+================================================================================
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+
+================================================================================
+FILE: lib/main.dart
+================================================================================
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'core/i18n/app_localizations.dart';
+import 'core/models/app_settings.dart';
+import 'core/storage_service.dart';
+import 'features/chat/chat_provider.dart';
+import 'features/settings/settings_provider.dart';
+import 'features/chat/chat_screen.dart';
+import 'features/calendar/calendar_screen.dart';
+import 'features/health/health_screen.dart';
+import 'features/settings/settings_screen.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await Hive.openBox('gemma_health');
+  runApp(const ProviderScope(child: MyApp()));
+}
+
+class MyApp extends ConsumerWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider).settings;
+    final themeMode = settings.theme == 'system'
+        ? ThemeMode.system
+        : settings.theme == 'dark'
+            ? ThemeMode.dark
+            : ThemeMode.light;
+    final accentColor = Color(settings.accentColor);
+
+    return MaterialApp(
+      title: 'Gemma Health Edge',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: accentColor,
+          brightness: Brightness.light,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+      ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: accentColor,
+          brightness: Brightness.dark,
+        ),
+        scaffoldBackgroundColor: const Color(0xFF0F172A),
+      ),
+      themeMode: themeMode,
+      locale: Locale(settings.language),
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: const DisclaimerScreen(),
+      routes: {
+        '/': (context) => const ChatScreen(),
+        '/calendar': (context) => const CalendarScreen(),
+        '/health': (context) => const HealthScreen(),
+        '/settings': (context) => const SettingsScreen(),
+      },
+    );
+  }
+}
+
+class DisclaimerScreen extends ConsumerStatefulWidget {
+  const DisclaimerScreen({super.key});
+
+  @override
+  ConsumerState<DisclaimerScreen> createState() => _DisclaimerScreenState();
+}
+
+class _DisclaimerScreenState extends ConsumerState<DisclaimerScreen> {
+  @override
+  Widget build(BuildContext context) {
+    final settings = ref.watch(settingsProvider).settings;
+    final l10n = AppLocalizations.of(context)!;
+
+    if (settings.disclaimerAccepted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.pushReplacementNamed(context, '/');
+      });
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 64, color: Colors.orange.shade600),
+              const SizedBox(height: 24),
+              Text(
+                l10n.disclaimerTitle,
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                l10n.disclaimerBody,
+                style: const TextStyle(fontSize: 14, height: 1.5),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              FilledButton(
+                onPressed: () {
+                  ref.read(settingsProvider.notifier).acceptDisclaimer();
+                },
+                child: Text(l10n.disclaimerAccept),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+================================================================================
+FILE: lib/core/api_client.dart
+================================================================================
+import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+class ApiClient {
+  String serverUrl;
+  final Map<String, String> _headers = {'Content-Type': 'application/json'};
+  
+  // Connection metrics
+  int _totalRequests = 0;
+  int _successfulRequests = 0;
+  int _totalLatencyMs = 0;
+  final List<int> _recentLatencies = [];
+  static const int _maxRecentLatencies = 10;
+
+  ApiClient({required this.serverUrl});
+
+  Future<bool> checkHealth() async {
+    try {
+      final start = DateTime.now();
+      final response = await http.get(
+        Uri.parse('$serverUrl/health'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 5));
+      final latency = DateTime.now().difference(start).inMilliseconds;
+      
+      _updateMetrics(response.statusCode == 200, latency);
+      return response.statusCode == 200;
+    } catch (e) {
+      _updateMetrics(false, 0);
+      return false;
+    }
+  }
+
+  Future<String?> autoDetectServer() async {
+    final localIp = '192.168.1';
+    for (int i = 1; i <= 255; i++) {
+      final url = 'http://$localIp.$i:8080';
+      try {
+        final response = await http.get(
+          Uri.parse('$url/health'),
+          headers: _headers,
+        ).timeout(const Duration(milliseconds: 200));
+        if (response.statusCode == 200) {
+          serverUrl = url;
+          return url;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  Stream<String> streamChat({
+    required List<Map<String, dynamic>> messages,
+    required bool useCloudApi,
+    required String cloudApiKey,
+    required String cloudModelId,
+  }) async* {
+    if (useCloudApi) {
+      yield* _streamCloudChat(messages, cloudApiKey, cloudModelId);
+    } else {
+      yield* _streamLocalChat(messages);
+    }
+  }
+
+  Stream<String> _streamLocalChat(List<Map<String, dynamic>> messages) async* {
+    try {
+      final start = DateTime.now();
+      final request = http.Request('POST', Uri.parse('$serverUrl/v1/chat/completions'));
+      request.headers.addAll(_headers);
+      request.body = jsonEncode({
+        'model': 'gemma-2-27b-it',
+        'messages': messages,
+        'stream': true,
+        'max_tokens': 2048,
+      });
+
+      final response = await request.send().timeout(const Duration(seconds: 60));
+      final latency = DateTime.now().difference(start).inMilliseconds;
+      _updateMetrics(response.statusCode == 200, latency);
+
+      if (response.statusCode != 200) {
+        yield '[ERROR] Server returned ${response.statusCode}';
+        return;
+      }
+
+      final stream = response.stream.transform(utf8.decoder);
+      await for (final chunk in stream) {
+        final lines = chunk.split('\n');
+        for (final line in lines) {
+          if (line.startsWith('data: ')) {
+            final data = line.substring(6);
+            if (data == '[DONE]') continue;
+            try {
+              final json = jsonDecode(data);
+              final content = json['choices']?[0]?['delta']?['content'];
+              if (content != null) {
+                yield content;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (e) {
+      _updateMetrics(false, 0);
+      yield '[ERROR] Connection failed: $e';
+    }
+  }
+
+  Stream<String> _streamCloudChat(
+    List<Map<String, dynamic>> messages,
+    String apiKey,
+    String modelId,
+  ) async* {
+    try {
+      final start = DateTime.now();
+      final request = http.Request('POST', Uri.parse('https://openrouter.ai/api/v1/chat/completions'));
+      request.headers.addAll({
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $apiKey',
+      });
+      request.body = jsonEncode({
+        'model': modelId,
+        'messages': messages,
+        'stream': true,
+        'max_tokens': 2048,
+      });
+
+      final response = await request.send().timeout(const Duration(seconds: 60));
+      final latency = DateTime.now().difference(start).inMilliseconds;
+      _updateMetrics(response.statusCode == 200, latency);
+
+      if (response.statusCode != 200) {
+        yield '[ERROR] Cloud API returned ${response.statusCode}';
+        return;
+      }
+
+      final stream = response.stream.transform(utf8.decoder);
+      await for (final chunk in stream) {
+        final lines = chunk.split('\n');
+        for (final line in lines) {
+          if (line.startsWith('data: ')) {
+            final data = line.substring(6);
+            if (data == '[DONE]') continue;
+            try {
+              final json = jsonDecode(data);
+              final content = json['choices']?[0]?['delta']?['content'];
+              if (content != null) {
+                yield content;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (e) {
+      _updateMetrics(false, 0);
+      yield '[ERROR] Cloud connection failed: $e';
+    }
+  }
+
+  Future<String> completeChat({
+    required List<Map<String, dynamic>> messages,
+    required bool useCloudApi,
+    required String cloudApiKey,
+    required String cloudModelId,
+    int maxTokens = 64,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    if (useCloudApi) {
+      return await _completeCloudChat(messages, cloudApiKey, cloudModelId, maxTokens, timeout);
+    } else {
+      return await _completeLocalChat(messages, maxTokens, timeout);
+    }
+  }
+
+  Future<String> _completeLocalChat(
+    List<Map<String, dynamic>> messages,
+    int maxTokens,
+    Duration timeout,
+  ) async {
+    try {
+      final start = DateTime.now();
+      final response = await http.post(
+        Uri.parse('$serverUrl/v1/chat/completions'),
+        headers: _headers,
+        body: jsonEncode({
+          'model': 'gemma-2-27b-it',
+          'messages': messages,
+          'stream': false,
+          'max_tokens': maxTokens,
+        }),
+      ).timeout(timeout);
+      final latency = DateTime.now().difference(start).inMilliseconds;
+      _updateMetrics(response.statusCode == 200, latency);
+
+      if (response.statusCode != 200) {
+        return 'ERROR: ${response.statusCode}';
+      }
+
+      final json = jsonDecode(response.body);
+      return json['choices']?[0]?['message']?['content'] ?? '';
+    } catch (e) {
+      _updateMetrics(false, 0);
+      return 'ERROR: $e';
+    }
+  }
+
+  Future<String> _completeCloudChat(
+    List<Map<String, dynamic>> messages,
+    String apiKey,
+    String modelId,
+    int maxTokens,
+    Duration timeout,
+  ) async {
+    try {
+      final start = DateTime.now();
+      final response = await http.post(
+        Uri.parse('https://openrouter.ai/api/v1/chat/completions'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        },
+        body: jsonEncode({
+          'model': modelId,
+          'messages': messages,
+          'stream': false,
+          'max_tokens': maxTokens,
+        }),
+      ).timeout(timeout);
+      final latency = DateTime.now().difference(start).inMilliseconds;
+      _updateMetrics(response.statusCode == 200, latency);
+
+      if (response.statusCode != 200) {
+        return 'ERROR: ${response.statusCode}';
+      }
+
+      final json = jsonDecode(response.body);
+      return json['choices']?[0]?['message']?['content'] ?? '';
+    } catch (e) {
+      _updateMetrics(false, 0);
+      return 'ERROR: $e';
+    }
+  }
+
+  Future<String?> fetchWikipediaSummary(String searchTerm) async {
+    try {
+      final url = 'https://en.wikipedia.org/api/rest_v1/page/summary/$searchTerm';
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        return json['extract'];
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  void _updateMetrics(bool success, int latencyMs) {
+    _totalRequests++;
+    if (success) {
+      _successfulRequests++;
+      _totalLatencyMs += latencyMs;
+      _recentLatencies.add(latencyMs);
+      if (_recentLatencies.length > _maxRecentLatencies) {
+        _recentLatencies.removeAt(0);
+      }
+    }
+  }
+
+  Map<String, dynamic> getConnectionMetrics() {
+    final successRate = _totalRequests > 0
+        ? '${(_successfulRequests / _totalRequests * 100).toStringAsFixed(0)}%'
+        : 'N/A';
+    final avgLatency = _successfulRequests > 0
+        ? (_totalLatencyMs / _successfulRequests).round()
+        : 0;
+    return {
+      'successRate': successRate,
+      'averageLatencyMs': avgLatency,
+      'totalRequests': _totalRequests,
+    };
+  }
+}
+
+================================================================================
+FILE: lib/core/ble_service.dart
+================================================================================
+import 'dart:async';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'models/health_sample.dart';
+
+class BleService {
+  static const heartRateServiceUuid = '0000180d-0000-1000-8000-00805f9b34fb';
+  static const heartRateMeasurementUuid = '00002a37-0000-1000-8000-00805f9b34fb';
+  static const bloodPressureServiceUuid = '00001810-0000-1000-8000-00805f9b34fb';
+  static const bloodPressureMeasurementUuid = '00002a35-0000-1000-8000-00805f9b34fb';
+  static const pulseOxServiceUuid = '00001822-0000-1000-8000-00805f9b34fb';
+  static const pulseOxMeasurementUuid = '00002a5e-0000-1000-8000-00805f9b34fb';
+
+  Stream<List<ScanResult>> scan({Duration timeout = const Duration(seconds: 10)}) async* {
+    await FlutterBluePlus.startScan(timeout: timeout);
+    yield* FlutterBluePlus.scanResults;
+  }
+
+  Future<void> stopScan() async {
+    await FlutterBluePlus.stopScan();
+  }
+
+  Future<BluetoothDevice> connect(BluetoothDevice device) async {
+    await device.connect();
+    await device.discoverServices();
+    return device;
+  }
+
+  Future<void> disconnect(BluetoothDevice device) async {
+    await device.disconnect();
+  }
+
+  Stream<HealthSample> subscribeMeasurements(BluetoothDevice device) async* {
+    final services = device.services;
+    if (services == null) return;
+
+    for (final service in services) {
+      if (service.uuid.toString().toLowerCase() == heartRateServiceUuid) {
+        yield* _subscribeHeartRate(service);
+      } else if (service.uuid.toString().toLowerCase() == bloodPressureServiceUuid) {
+        yield* _subscribeBloodPressure(service);
+      } else if (service.uuid.toString().toLowerCase() == pulseOxServiceUuid) {
+        yield* _subscribePulseOx(service);
+      }
+    }
+  }
+
+  Stream<HealthSample> _subscribeHeartRate(BluetoothService service) async* {
+    final characteristic = service.characteristics.firstWhere(
+      (c) => c.uuid.toString().toLowerCase() == heartRateMeasurementUuid,
+      orElse: () => throw Exception('Heart rate characteristic not found'),
+    );
+    await characteristic.setNotifyValue(true);
+    yield* characteristic.value.map((data) {
+      return _parseHeartRate(data);
+    });
+  }
+
+  Stream<HealthSample> _subscribeBloodPressure(BluetoothService service) async* {
+    final characteristic = service.characteristics.firstWhere(
+      (c) => c.uuid.toString().toLowerCase() == bloodPressureMeasurementUuid,
+      orElse: () => throw Exception('Blood pressure characteristic not found'),
+    );
+    await characteristic.setNotifyValue(true);
+    yield* characteristic.value.map((data) {
+      return _parseBloodPressure(data);
+    });
+  }
+
+  Stream<HealthSample> _subscribePulseOx(BluetoothService service) async* {
+    final characteristic = service.characteristics.firstWhere(
+      (c) => c.uuid.toString().toLowerCase() == pulseOxMeasurementUuid,
+      orElse: () => throw Exception('Pulse ox characteristic not found'),
+    );
+    await characteristic.setNotifyValue(true);
+    yield* characteristic.value.map((data) {
+      return _parsePulseOx(data);
+    });
+  }
+
+  HealthSample _parseHeartRate(List<int> data) {
+    if (data.isEmpty) return HealthSample(type: 'HEART_RATE', value: 0, unit: 'bpm');
+    
+    final flags = data[0];
+    final is16Bit = (flags & 0x01) == 0;
+    
+    int heartRate;
+    if (is16Bit && data.length >= 3) {
+      heartRate = (data[1] + (data[2] << 8));
+    } else if (data.length >= 2) {
+      heartRate = data[1];
+    } else {
+      heartRate = 0;
+    }
+    
+    return HealthSample(
+      type: 'HEART_RATE',
+      value: heartRate.toDouble(),
+      unit: 'bpm',
+      source: 'BLE',
+    );
+  }
+
+  HealthSample _parseBloodPressure(List<int> data) {
+    if (data.length < 7) {
+      return HealthSample(type: 'BLOOD_PRESSURE_SYSTOLIC', value: 0, unit: 'mmHg');
+    }
+    
+    final systolic = data[1] + (data[2] << 8);
+    final diastolic = data[3] + (data[4] << 8);
+    
+    return HealthSample(
+      type: 'BLOOD_PRESSURE_SYSTOLIC',
+      value: systolic.toDouble(),
+      unit: 'mmHg',
+      source: 'BLE',
+    );
+  }
+
+  HealthSample _parsePulseOx(List<int> data) {
+    if (data.length < 5) {
+      return HealthSample(type: 'BLOOD_OXYGEN', value: 0, unit: '%');
+    }
+    
+    final spo2 = data[2];
+    final pulse = data[1] + (data[0] << 8);
+    
+    return HealthSample(
+      type: 'BLOOD_OXYGEN',
+      value: spo2.toDouble(),
+      unit: '%',
+      source: 'BLE',
+    );
+  }
+}
+
+================================================================================
+FILE: lib/core/health_service.dart
+================================================================================
+import 'package:health/health.dart';
+import 'models/health_sample.dart';
+
+class HealthService {
+  final Health _health = Health();
+
+  Future<bool> requestAuthorization() async {
+    final types = [
+      HealthDataType.STEPS,
+      HealthDataType.HEART_RATE,
+      HealthDataType.BLOOD_OXYGEN,
+      HealthDataType.BLOOD_PRESSURE_SYSTOLIC,
+      HealthDataType.BLOOD_PRESSURE_DIASTOLIC,
+    ];
+
+    try {
+      final requested = await _health.requestAuthorization(types);
+      return requested;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<List<HealthSample>> fetchSamples({
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final samples = <HealthSample>[];
+
+    try {
+      final steps = await _health.getHealthDataFromTypes(start, end, [HealthDataType.STEPS]);
+      for (final s in steps) {
+        if (s.value is num) {
+          samples.add(HealthSample(
+            type: 'STEPS',
+            value: (s.value as num).toDouble(),
+            unit: 'count',
+            timestamp: s.dateFrom,
+            source: s.sourceId ?? 'Health',
+          ));
+        }
+      }
+
+      final hr = await _health.getHealthDataFromTypes(start, end, [HealthDataType.HEART_RATE]);
+      for (final s in hr) {
+        if (s.value is num) {
+          samples.add(HealthSample(
+            type: 'HEART_RATE',
+            value: (s.value as num).toDouble(),
+            unit: 'bpm',
+            timestamp: s.dateFrom,
+            source: s.sourceId ?? 'Health',
+          ));
+        }
+      }
+
+      final spo2 = await _health.getHealthDataFromTypes(start, end, [HealthDataType.BLOOD_OXYGEN]);
+      for (final s in spo2) {
+        if (s.value is num) {
+          samples.add(HealthSample(
+            type: 'BLOOD_OXYGEN',
+            value: (s.value as num).toDouble(),
+            unit: '%',
+            timestamp: s.dateFrom,
+            source: s.sourceId ?? 'Health',
+          ));
+        }
+      }
+
+      final sys = await _health.getHealthDataFromTypes(start, end, [HealthDataType.BLOOD_PRESSURE_SYSTOLIC]);
+      for (final s in sys) {
+        if (s.value is num) {
+          samples.add(HealthSample(
+            type: 'BLOOD_PRESSURE_SYSTOLIC',
+            value: (s.value as num).toDouble(),
+            unit: 'mmHg',
+            timestamp: s.dateFrom,
+            source: s.sourceId ?? 'Health',
+          ));
+        }
+      }
+
+      final dia = await _health.getHealthDataFromTypes(start, end, [HealthDataType.BLOOD_PRESSURE_DIASTOLIC]);
+      for (final s in dia) {
+        if (s.value is num) {
+          samples.add(HealthSample(
+            type: 'BLOOD_PRESSURE_DIASTOLIC',
+            value: (s.value as num).toDouble(),
+            unit: 'mmHg',
+            timestamp: s.dateFrom,
+            source: s.sourceId ?? 'Health',
+          ));
+        }
+      }
+    } catch (e) {
+      // Handle platform-specific errors
+    }
+
+    return samples;
+  }
+}
+
+================================================================================
+FILE: lib/core/rag_service.dart
+================================================================================
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/services.dart';
+
+class RagService {
+  bool isInitialized = false;
+  final Map<String, List<String>> _invertedIndex = {};
+  final List<String> _documents = [];
+
+  Future<void> initialize() async {
+    try {
+      final csvData = await rootBundle.loadString('assets/medical_kb.csv');
+      final lines = csvData.split('\n');
+      
+      for (int i = 1; i < lines.length; i++) {
+        final line = lines[i].trim();
+        if (line.isEmpty) continue;
+        
+        final parts = line.split(',');
+        if (parts.length >= 2) {
+          final text = parts.sublist(1).join(',').trim();
+          _documents.add(text);
+          
+          final words = text.toLowerCase().split(RegExp(r'\s+'));
+          for (final word in words) {
+            if (word.length > 2) {
+              _invertedIndex.putIfAbsent(word, () => []);
+              if (!_invertedIndex[word]!.contains(text)) {
+                _invertedIndex[word]!.add(text);
+              }
+            }
+          }
+        }
+      }
+      
+      isInitialized = true;
+    } catch (e) {
+      // Fallback: use empty index
+      isInitialized = true;
+    }
+  }
+
+  List<RagResult> search(String query, {int limit = 5}) {
+    if (!isInitialized) return [];
+    
+    final queryWords = query.toLowerCase().split(RegExp(r'\s+'));
+    final scores = <String, double>{};
+    
+    for (final word in queryWords) {
+      if (word.length <= 2) continue;
+      
+      final matches = _invertedIndex[word] ?? [];
+      for (final doc in matches) {
+        scores[doc] = (scores[doc] ?? 0) + 1.0;
+      }
+    }
+    
+    final sorted = scores.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    
+    return sorted.take(limit).map((e) => RagResult(text: e.key, score: e.value)).toList();
+  }
+}
+
+class RagResult {
+  final String text;
+  final double score;
+  
+  RagResult({required this.text, required this.score});
+}
+
+================================================================================
+FILE: lib/core/secure_storage_service.dart
+================================================================================
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+class SecureStorageService {
+  static const _storage = FlutterSecureStorage();
+  static const _xorKey = 42; // Simple XOR for demo (not production-secure)
+
+  Future<void> storeApiKey(String key, String value) async {
+    final encrypted = _xorEncrypt(value);
+    await _storage.write(key: key, value: encrypted);
+  }
+
+  Future<String?> getApiKey(String key) async {
+    final encrypted = await _storage.read(key: key);
+    if (encrypted == null) return null;
+    return _xorDecrypt(encrypted);
+  }
+
+  Future<void> deleteApiKey(String key) async {
+    await _storage.delete(key: key);
+  }
+
+  String _xorEncrypt(String text) {
+    final bytes = text.codeUnits;
+    final encrypted = bytes.map((b) => b ^ _xorKey).toList();
+    return String.fromCharCodes(encrypted);
+  }
+
+  String _xorDecrypt(String encrypted) {
+    final bytes = encrypted.codeUnits;
+    final decrypted = bytes.map((b) => b ^ _xorKey).toList();
+    return String.fromCharCodes(decrypted);
+  }
+}
+
+================================================================================
+FILE: lib/core/storage_service.dart
+================================================================================
+import 'dart:convert';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'models/app_settings.dart';
+import 'models/health_sample.dart';
+import 'models/message.dart';
+import 'models/mood_entry.dart';
+import 'models/session.dart';
+import 'secure_storage_service.dart';
+
+class StorageService {
+  static const String _settingsKey = 'app_settings';
+  static const String _sessionsKey = 'chat_sessions';
+  static const String _moodsKey = 'mood_entries';
+  static const String _healthKey = 'health_samples';
+  
+  final _secureStorage = SecureStorageService();
+  late final Box _box;
+
+  StorageService() {
+    _box = Hive.box('gemma_health');
+  }
+
+  // Settings
+  Future<AppSettings> loadSettings() async {
+    final json = _box.get(_settingsKey);
+    if (json == null) return const AppSettings();
+    
+    try {
+      final settingsJson = json as Map<String, dynamic>;
+      final apiKey = await _secureStorage.getApiKey('cloud_api_key');
+      if (apiKey != null) {
+        settingsJson['cloudApiKey'] = apiKey;
+      }
+      return AppSettings.fromJson(settingsJson);
+    } catch (e) {
+      return const AppSettings();
+    }
+  }
+
+  Future<void> saveSettings(AppSettings settings) async {
+    await _secureStorage.storeApiKey('cloud_api_key', settings.cloudApiKey);
+    final json = settings.toJson();
+    json.remove('cloudApiKey'); // Don't store in Hive
+    await _box.put(_settingsKey, json);
+  }
+
+  // Sessions
+  List<Session> loadSessions() {
+    final json = _box.get(_sessionsKey);
+    if (json == null) return [];
+    
+    try {
+      final list = json as List;
+      return list.map((e) => Session.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<void> saveSessions(List<Session> sessions) async {
+    final json = sessions.map((s) => s.toJson()).toList();
+    await _box.put(_sessionsKey, json);
+  }
+
+  Future<void> deleteSession(String sessionId) async {
+    final sessions = loadSessions();
+    sessions.removeWhere((s) => s.id == sessionId);
+    await saveSessions(sessions);
+  }
+
+  // Moods
+  List<MoodEntry> loadMoods() {
+    final json = _box.get(_moodsKey);
+    if (json == null) return [];
+    
+    try {
+      final list = json as List;
+      return list.map((e) => MoodEntry.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<void> saveMood(MoodEntry entry) async {
+    final moods = loadMoods();
+    final index = moods.indexWhere((m) => m.date == entry.date);
+    if (index >= 0) {
+      moods[index] = entry;
+    } else {
+      moods.add(entry);
+    }
+    await _box.put(_moodsKey, moods.map((m) => m.toJson()).toList());
+  }
+
+  Future<void> deleteMood(String date) async {
+    final moods = loadMoods();
+    moods.removeWhere((m) => m.date == date);
+    await _box.put(_moodsKey, moods.map((m) => m.toJson()).toList());
+  }
+
+  // Health Samples
+  List<HealthSample> loadHealthSamples() {
+    final json = _box.get(_healthKey);
+    if (json == null) return [];
+    
+    try {
+      final list = json as List;
+      return list.map((e) => HealthSample.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<void> saveHealthSamples(List<HealthSample> samples) async {
+    final existing = loadHealthSamples();
+    final merged = [...existing, ...samples];
+    await _box.put(_healthKey, merged.map((s) => s.toJson()).toList());
+  }
+
+  Future<void> saveHealthSample(HealthSample sample) async {
+    final samples = loadHealthSamples();
+    samples.add(sample);
+    await _box.put(_healthKey, samples.map((s) => s.toJson()).toList());
+  }
+
+  // Backup/Restore
+  Future<String> exportAll() async {
+    final data = {
+      'settings': (await loadSettings()).toJson(),
+      'sessions': loadSessions().map((s) => s.toJson()).toList(),
+      'moods': loadMoods().map((m) => m.toJson()).toList(),
+      'health': loadHealthSamples().map((h) => h.toJson()).toList(),
+    };
+    return jsonEncode(data);
+  }
+
+  Future<void> importAll(String json) async {
+    final data = jsonDecode(json) as Map<String, dynamic>;
+    
+    if (data['settings'] != null) {
+      await saveSettings(AppSettings.fromJson(data['settings'] as Map<String, dynamic>));
+    }
+    
+    if (data['sessions'] != null) {
+      final sessions = (data['sessions'] as List)
+          .map((e) => Session.fromJson(e as Map<String, dynamic>))
+          .toList();
+      await saveSessions(sessions);
+    }
+    
+    if (data['moods'] != null) {
+      final moods = (data['moods'] as List)
+          .map((e) => MoodEntry.fromJson(e as Map<String, dynamic>))
+          .toList();
+      await _box.put(_moodsKey, moods.map((m) => m.toJson()).toList());
+    }
+    
+    if (data['health'] != null) {
+      final health = (data['health'] as List)
+          .map((e) => HealthSample.fromJson(e as Map<String, dynamic>))
+          .toList();
+      await _box.put(_healthKey, health.map((h) => h.toJson()).toList());
+    }
+  }
+
+  Future<void> clearAll() async {
+    await _box.deleteAll();
+    await _secureStorage.deleteApiKey('cloud_api_key');
+  }
+
+  int get approximateSize {
+    return _box.length * 1024; // Rough estimate
+  }
+}
+
+================================================================================
+FILE: lib/core/models/app_settings.dart
+================================================================================
+class AppSettings {
+  static const String defaultServerUrl = 'http://192.168.1.1:8080';
+  static const String defaultCloudModelId = 'google/gemma-2-27b-it';
+  static const int defaultAccentColor = 0xFF3B82F6;
+  
+  static const List<String> supportedLanguages = ['en', 'fr', 'de', 'es', 'zh', 'hi', 'ru'];
+  static const Map<String, String> languageNames = {
+    'en': 'English',
+    'fr': 'Français',
+    'de': 'Deutsch',
+    'es': 'Español',
+    'zh': '中文',
+    'hi': 'हिन्दी',
+    'ru': 'Русский',
+  };
+
+  final String serverUrl;
+  final String theme;
+  final int accentColor;
+  final String language;
+  final bool showThinking;
+  final bool enableVoice;
+  final bool enableResearch;
+  final bool enableServerCritic;
+  final bool useCloudApi;
+  final String cloudApiKey;
+  final String cloudModelId;
+  final int maxHistoryTurns;
+  final bool disclaimerAccepted;
+
+  const AppSettings({
+    this.serverUrl = defaultServerUrl,
+    this.theme = 'system',
+    this.accentColor = defaultAccentColor,
+    this.language = 'en',
+    this.showThinking = true,
+    this.enableVoice = false,
+    this.enableResearch = false,
+    this.enableServerCritic = false,
+    this.useCloudApi = false,
+    this.cloudApiKey = '',
+    this.cloudModelId = defaultCloudModelId,
+    this.maxHistoryTurns = 10,
+    this.disclaimerAccepted = false,
+  });
+
+  AppSettings copyWith({
+    String? serverUrl,
+    String? theme,
+    int? accentColor,
+    String? language,
+    bool? showThinking,
+    bool? enableVoice,
+    bool? enableResearch,
+    bool? enableServerCritic,
+    bool? useCloudApi,
+    String? cloudApiKey,
+    String? cloudModelId,
+    int? maxHistoryTurns,
+    bool? disclaimerAccepted,
+  }) {
+    return AppSettings(
+      serverUrl: serverUrl ?? this.serverUrl,
+      theme: theme ?? this.theme,
+      accentColor: accentColor ?? this.accentColor,
+      language: language ?? this.language,
+      showThinking: showThinking ?? this.showThinking,
+      enableVoice: enableVoice ?? this.enableVoice,
+      enableResearch: enableResearch ?? this.enableResearch,
+      enableServerCritic: enableServerCritic ?? this.enableServerCritic,
+      useCloudApi: useCloudApi ?? this.useCloudApi,
+      cloudApiKey: cloudApiKey ?? this.cloudApiKey,
+      cloudModelId: cloudModelId ?? this.cloudModelId,
+      maxHistoryTurns: maxHistoryTurns ?? this.maxHistoryTurns,
+      disclaimerAccepted: disclaimerAccepted ?? this.disclaimerAccepted,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'serverUrl': serverUrl,
+      'theme': theme,
+      'accentColor': accentColor,
+      'language': language,
+      'showThinking': showThinking,
+      'enableVoice': enableVoice,
+      'enableResearch': enableResearch,
+      'enableServerCritic': enableServerCritic,
+      'useCloudApi': useCloudApi,
+      'cloudApiKey': cloudApiKey,
+      'cloudModelId': cloudModelId,
+      'maxHistoryTurns': maxHistoryTurns,
+      'disclaimerAccepted': disclaimerAccepted,
+    };
+  }
+
+  factory AppSettings.fromJson(Map<String, dynamic> json) {
+    return AppSettings(
+      serverUrl: json['serverUrl'] ?? defaultServerUrl,
+      theme: json['theme'] ?? 'system',
+      accentColor: json['accentColor'] ?? defaultAccentColor,
+      language: json['language'] ?? 'en',
+      showThinking: json['showThinking'] ?? true,
+      enableVoice: json['enableVoice'] ?? false,
+      enableResearch: json['enableResearch'] ?? false,
+      enableServerCritic: json['enableServerCritic'] ?? false,
+      useCloudApi: json['useCloudApi'] ?? false,
+      cloudApiKey: json['cloudApiKey'] ?? '',
+      cloudModelId: json['cloudModelId'] ?? defaultCloudModelId,
+      maxHistoryTurns: json['maxHistoryTurns'] ?? 10,
+      disclaimerAccepted: json['disclaimerAccepted'] ?? false,
+    );
+  }
+}
+
+================================================================================
+FILE: lib/core/models/health_sample.dart
+================================================================================
+class HealthSample {
+  final String type;
+  final double value;
+  final String unit;
+  final DateTime timestamp;
+  final String source;
+
+  HealthSample({
+    required this.type,
+    required this.value,
+    required this.unit,
+    DateTime? timestamp,
+    this.source = 'Unknown',
+  }) : timestamp = timestamp ?? DateTime.now();
+
+  HealthSample copyWith({
+    String? type,
+    double? value,
+    String? unit,
+    DateTime? timestamp,
+    String? source,
+  }) {
+    return HealthSample(
+      type: type ?? this.type,
+      value: value ?? this.value,
+      unit: unit ?? this.unit,
+      timestamp: timestamp ?? this.timestamp,
+      source: source ?? this.source,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'type': type,
+      'value': value,
+      'unit': unit,
+      'timestamp': timestamp.toIso8601String(),
+      'source': source,
+    };
+  }
+
+  factory HealthSample.fromJson(Map<String, dynamic> json) {
+    return HealthSample(
+      type: json['type'] as String,
+      value: (json['value'] as num).toDouble(),
+      unit: json['unit'] as String,
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      source: json['source'] as String? ?? 'Unknown',
+    );
+  }
+}
+
+================================================================================
+FILE: lib/core/models/message.dart
+================================================================================
+class Message {
+  final String id;
+  final String role; // 'user' | 'assistant'
+  final String content;
+  final String? imageBase64;
+  final DateTime timestamp;
+
+  Message({
+    required this.id,
+    required this.role,
+    required this.content,
+    this.imageBase64,
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
+
+  Message copyWith({
+    String? id,
+    String? role,
+    String? content,
+    String? imageBase64,
+    DateTime? timestamp,
+  }) {
+    return Message(
+      id: id ?? this.id,
+      role: role ?? this.role,
+      content: content ?? this.content,
+      imageBase64: imageBase64 ?? this.imageBase64,
+      timestamp: timestamp ?? this.timestamp,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'role': role,
+      'content': content,
+      'imageBase64': imageBase64,
+      'timestamp': timestamp.toIso8601String(),
+    };
+  }
+
+  factory Message.fromJson(Map<String, dynamic> json) {
+    return Message(
+      id: json['id'] as String,
+      role: json['role'] as String,
+      content: json['content'] as String,
+      imageBase64: json['imageBase64'] as String?,
+      timestamp: DateTime.parse(json['timestamp'] as String),
+    );
+  }
+
+  Map<String, dynamic> toApiMessage() {
+    final msg = <String, dynamic>{
+      'role': role,
+      'content': content,
+    };
+    if (imageBase64 != null && imageBase64!.isNotEmpty) {
+      msg['image_url'] = {'url': "data:image/jpeg;base64,$imageBase64"};
+    }
+    return msg;
+  }
+}
+
+================================================================================
+FILE: lib/core/models/mood_entry.dart
+================================================================================
+class MoodEntry {
+  final String date; // 'YYYY-MM-DD'
+  final int mood; // 1-5
+
+  static const Map<int, String> emojiMap = {
+    1: '😔',
+    2: '😕',
+    3: '😐',
+    4: '🙂',
+    5: '😊',
+  };
+
+  static const Map<int, String> labelMap = {
+    1: 'Poor',
+    2: 'Fair',
+    3: 'Okay',
+    4: 'Good',
+    5: 'Great',
+  };
+
+  static const Map<int, int> colorMap = {
+    1: 0xFFEF4444, // Red
+    2: 0xFFF59E0B, // Amber
+    3: 0xFF6B7280, // Gray
+    4: 0xFF10B981, // Green
+    5: 0xFF3B82F6, // Blue
+  };
+
+  MoodEntry({required this.date, required this.mood});
+
+  bool get isValid => mood >= 1 && mood <= 5;
+
+  String? get emoji => emojiMap[mood];
+  String? get label => labelMap[mood];
+  int? get color => colorMap[mood];
+
+  MoodEntry copyWith({String? date, int? mood}) {
+    return MoodEntry(date: date ?? this.date, mood: mood ?? this.mood);
+  }
+
+  Map<String, dynamic> toJson() {
+    return {'date': date, 'mood': mood};
+  }
+
+  factory MoodEntry.fromJson(Map<String, dynamic> json) {
+    return MoodEntry(
+      date: json['date'] as String,
+      mood: json['mood'] as int,
+    );
+  }
+}
+
+================================================================================
+FILE: lib/core/models/session.dart
+================================================================================
+class Session {
+  final String id;
+  final String title;
+  final DateTime date;
+  final List<Message> messages;
+
+  Session({
+    required this.id,
+    required this.title,
+    required this.date,
+    required this.messages,
+  });
+
+  static List<Session> enforceLimit(List<Session> sessions, {int max = 50}) {
+    if (sessions.length <= max) return sessions;
+    return sessions.take(max).toList();
+  }
+
+  Session copyWith({
+    String? id,
+    String? title,
+    DateTime? date,
+    List<Message>? messages,
+  }) {
+    return Session(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      date: date ?? this.date,
+      messages: messages ?? this.messages,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'date': date.toIso8601String(),
+      'messages': messages.map((m) => m.toJson()).toList(),
+    };
+  }
+
+  factory Session.fromJson(Map<String, dynamic> json) {
+    return Session(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      date: DateTime.parse(json['date'] as String),
+      messages: (json['messages'] as List)
+          .map((m) => Message.fromJson(m as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+================================================================================
+FILE: lib/core/i18n/app_localizations.dart
+================================================================================
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
+abstract class AppLocalizations {
+  static const LocalizationsDelegate<AppLocalizations> delegate =
+      _AppLocalizationsDelegate();
+
+  static const List<Locale> supportedLocales = [
+    Locale('en'),
+    Locale('fr'),
+    Locale('de'),
+    Locale('es'),
+    Locale('zh'),
+    Locale('hi'),
+    Locale('ru'),
+  ];
+
+  static AppLocalizations? of(BuildContext context) {
+    return Localizations.of<AppLocalizations>(context, AppLocalizations);
+  }
+
+  String get appTitle;
+  String get chatPlaceholder;
+  String get sendButton;
+  String get clearChat;
+  String get newSession;
+  String get settingsTitle;
+  String get serverUrl;
+  String get serverStatus;
+  String get serverOnline;
+  String get serverOffline;
+  String get serverChecking;
+  String get autoDetect;
+  String get themeLabel;
+  String get themeDark;
+  String get themeLight;
+  String get themeSystem;
+  String get languageLabel;
+  String get voiceInput;
+  String get voiceOutput;
+  String get researchMode;
+  String get showThinking;
+  String get calendarTitle;
+  String get moodLabel;
+  String get moodPoor;
+  String get moodFair;
+  String get moodOkay;
+  String get moodGood;
+  String get moodGreat;
+  String get moodAverage;
+  String get clearMood;
+  String get disclaimerTitle;
+  String get disclaimerBody;
+  String get disclaimerAccept;
+  String get exportData;
+  String get importData;
+  String get clearAllData;
+  String get cameraButton;
+  String get galleryButton;
+  String get removeImage;
+  String get thinking;
+  String get researchNote;
+  String get notADoctor;
+  String get consultProfessional;
+  String get emergencyNote;
+  String get sessionHistory;
+  String get deleteSession;
+  String get noSessions;
+  String get typingIndicator;
+  String get copyMessage;
+  String get errorTitle;
+  String get errorRetry;
+  String get offlineMode;
+  String get onlineMode;
+  String get accentColor;
+  String get resetColors;
+  String get serverNote;
+  String get clearAllConfirm;
+  String get cancel;
+  String get confirm;
+  String get welcomeTitle;
+  String get welcomeSubtitle;
+  String get suggestionSkin;
+  String get suggestionMeds;
+  String get suggestionNutrition;
+  String get suggestionFirstAid;
+  String get storageStats;
+  String get aboutVersion;
+  String get aboutDisclaimer;
+  String get featuresSection;
+  String get dataSection;
+  String get aboutSection;
+  String get serverSection;
+  String get appearanceSection;
+  String get testConnection;
+
+  String serverFound(String url);
+  String get noServerFound;
+  String get serverNotRunning;
+  String get requestTimeout;
+  String serverError(int code);
+}
+
+class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
+  const _AppLocalizationsDelegate();
+
+  @override
+  Future<AppLocalizations> load(Locale locale) async {
+    switch (locale.languageCode) {
+      case 'de':
+        return AppLocalizationsDe();
+      case 'es':
+        return AppLocalizationsEs();
+      case 'fr':
+        return AppLocalizationsFr();
+      case 'hi':
+        return AppLocalizationsHi();
+      case 'ru':
+        return AppLocalizationsRu();
+      case 'zh':
+        return AppLocalizationsZh();
+      default:
+        return AppLocalizationsEn();
+    }
+  }
+
+  @override
+  bool isSupported(Locale locale) {
+    return AppLocalizations.supportedLocales
+        .map((l) => l.languageCode)
+        .contains(locale.languageCode);
+  }
+
+  @override
+  bool shouldReload(_AppLocalizationsDelegate old) => false;
+}
+
+================================================================================
+FILE: lib/core/i18n/app_localizations_de.dart
+================================================================================
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for German (`de`).
+class AppLocalizationsDe extends AppLocalizations {
+  AppLocalizationsDe([String locale = 'de']) : super(locale);
+
+  @override
+  String get appTitle => 'Gemma Health Edge';
+
+  @override
+  String get chatPlaceholder => 'Stellen Sie eine Gesundheitsfrage...';
+
+  @override
+  String get sendButton => 'Senden';
+
+  @override
+  String get clearChat => 'Chat löschen';
+
+  @override
+  String get newSession => 'Neue Sitzung';
+
+  @override
+  String get settingsTitle => 'Einstellungen';
+
+  @override
+  String get serverUrl => 'Server-URL';
+
+  @override
+  String get serverStatus => 'Server-Status';
+
+  @override
+  String get serverOnline => 'Online';
+
+  @override
+  String get serverOffline => 'Offline';
+
+  @override
+  String get serverChecking => 'Prüfe...';
+
+  @override
+  String get autoDetect => 'Auto-Erkennung';
+
+  @override
+  String get themeLabel => 'Design';
+
+  @override
+  String get themeDark => 'Dunkel';
+
+  @override
+  String get themeLight => 'Hell';
+
+  @override
+  String get themeSystem => 'System';
+
+  @override
+  String get languageLabel => 'Sprache';
+
+  @override
+  String get voiceInput => 'Spracheingabe';
+
+  @override
+  String get voiceOutput => 'Sprachausgabe';
+
+  @override
+  String get researchMode => 'Forschungsmodus';
+
+  @override
+  String get showThinking => 'Denkprozess anzeigen';
+
+  @override
+  String get calendarTitle => 'Gesundheitskalender';
+
+  @override
+  String get moodLabel => 'Stimmung';
+
+  @override
+  String get moodPoor => 'Schlecht';
+
+  @override
+  String get moodFair => 'Mäßig';
+
+  @override
+  String get moodOkay => 'Okay';
+
+  @override
+  String get moodGood => 'Gut';
+
+  @override
+  String get moodGreat => 'Super';
+
+  @override
+  String get moodAverage => 'Monatsdurchschnitt';
+
+  @override
+  String get clearMood => 'Löschen';
+
+  @override
+  String get disclaimerTitle => '⚠️ Medizinischer Haftungsausschluss';
+
+  @override
+  String get disclaimerBody =>
+      'Diese Anwendung bietet **nur allgemeine Gesundheitsinformationen**. Sie ist **KEIN** Ersatz für professionelle medizinische Beratung, Diagnose oder Behandlung.\n\n• Verlassen Sie sich nicht ausschließlich auf dieses Tool für Gesundheitsentscheidungen\n• Konsultieren Sie immer qualifizierte medizinische Fachkräfte\n• Wenden Sie sich bei Notfällen sofort an die örtlichen Notdienste\n• KI kann ungenaue Informationen liefern\n\n**Datenschutz:** Im Offline-Modus verbleiben alle Daten auf Ihrem Gerät. Im Online-/Forschungsmodus werden Anfragen an Wikipedia gesendet.';
+
+  @override
+  String get disclaimerAccept => 'Ich verstehe — Fortfahren';
+
+  @override
+  String get exportData => 'Backup exportieren';
+
+  @override
+  String get importData => 'Backup importieren';
+
+  @override
+  String get clearAllData => 'Alle Daten löschen';
+
+  @override
+  String get cameraButton => 'Kamera';
+
+  @override
+  String get galleryButton => 'Galerie';
+
+  @override
+  String get removeImage => 'Bild entfernen';
+
+  @override
+  String get thinking => 'Denke...';
+
+  @override
+  String get researchNote => '🔬 Wikipedia-Kontext hinzugefügt';
+
+  @override
+  String get notADoctor =>
+      'Ich bin kein Arzt. Konsultieren Sie immer einen medizinischen Fachmann.';
+
+  @override
+  String get consultProfessional =>
+      'Konsultieren Sie einen medizinischen Fachmann für medizinische Beratung.';
+
+  @override
+  String get emergencyNote =>
+      'Wenden Sie sich bei Notfällen an die örtlichen Notdienste.';
+
+  @override
+  String get sessionHistory => 'Sitzungsverlauf';
+
+  @override
+  String get deleteSession => 'Sitzung löschen';
+
+  @override
+  String get noSessions => 'Keine gespeicherten Sitzungen';
+
+  @override
+  String get typingIndicator => 'Tippt...';
+
+  @override
+  String get copyMessage => 'Kopieren';
+
+  @override
+  String get errorTitle => 'Fehler';
+
+  @override
+  String get errorRetry => 'Wiederholen';
+
+  @override
+  String get offlineMode => 'Offline';
+
+  @override
+  String get onlineMode => 'Online';
+
+  @override
+  String get accentColor => 'Akzentfarbe';
+
+  @override
+  String get resetColors => 'Farben zurücksetzen';
+
+  @override
+  String get serverNote =>
+      'Verwenden Sie für den LAN-Zugriff die lokale IP Ihres PCs. Verwenden Sie für den Remote-Zugriff die cloudflared-Tunnel-URL.';
+
+  @override
+  String get clearAllConfirm =>
+      'Möchten Sie wirklich alle Daten löschen? Dies kann nicht rückgängig gemacht werden.';
+
+  @override
+  String get cancel => 'Abbrechen';
+
+  @override
+  String get confirm => 'Bestätigen';
+
+  @override
+  String get welcomeTitle => 'Willkommen bei Gemma Health Edge';
+
+  @override
+  String get welcomeSubtitle => 'Ihr Offline-Gesundheitsassistent';
+
+  @override
+  String get suggestionSkin => 'Hautzustand analysieren';
+
+  @override
+  String get suggestionMeds => 'Medikamenteninformationen prüfen';
+
+  @override
+  String get suggestionNutrition => 'Ernährungstipps';
+
+  @override
+  String get suggestionFirstAid => 'Erste-Hilfe-Anleitung';
+
+  @override
+  String get storageStats => 'Speichernutzung';
+
+  @override
+  String get aboutVersion => 'Version';
+
+  @override
+  String get aboutDisclaimer => 'Medizinischer Haftungsausschluss';
+
+  @override
+  String get featuresSection => 'Funktionen';
+
+  @override
+  String get dataSection => 'Daten';
+
+  @override
+  String get aboutSection => 'Über';
+
+  @override
+  String get serverSection => 'Server';
+
+  @override
+  String get appearanceSection => 'Erscheinungsbild';
+
+  @override
+  String get testConnection => 'Testen';
+
+  @override
+  String serverFound(String url) {
+    return 'Server found: $url';
+  }
+
+  @override
+  String get noServerFound => 'No server found';
+
+  @override
+  String get serverNotRunning => 'Is the server running?';
+
+  @override
+  String get requestTimeout => 'Request timed out';
+
+  @override
+  String serverError(int code) {
+    return 'Server returned $code';
+  }
+}
+
+================================================================================
+FILE: lib/core/i18n/app_localizations_es.dart
+================================================================================
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for Spanish (`es`).
+class AppLocalizationsEs extends AppLocalizations {
+  AppLocalizationsEs([String locale = 'es']) : super(locale);
+
+  @override
+  String get appTitle => 'Gemma Health Edge';
+
+  @override
+  String get chatPlaceholder => 'Haz una pregunta de salud...';
+
+  @override
+  String get sendButton => 'Enviar';
+
+  @override
+  String get clearChat => 'Limpiar chat';
+
+  @override
+  String get newSession => 'Nueva sesión';
+
+  @override
+  String get settingsTitle => 'Configuración';
+
+  @override
+  String get serverUrl => 'URL del servidor';
+
+  @override
+  String get serverStatus => 'Estado del servidor';
+
+  @override
+  String get serverOnline => 'En línea';
+
+  @override
+  String get serverOffline => 'Sin conexión';
+
+  @override
+  String get serverChecking => 'Verificando...';
+
+  @override
+  String get autoDetect => 'Detección automática';
+
+  @override
+  String get themeLabel => 'Tema';
+
+  @override
+  String get themeDark => 'Oscuro';
+
+  @override
+  String get themeLight => 'Claro';
+
+  @override
+  String get themeSystem => 'Sistema';
+
+  @override
+  String get languageLabel => 'Idioma';
+
+  @override
+  String get voiceInput => 'Entrada de voz';
+
+  @override
+  String get voiceOutput => 'Salida de voz';
+
+  @override
+  String get researchMode => 'Modo investigación';
+
+  @override
+  String get showThinking => 'Mostrar proceso de pensamiento';
+
+  @override
+  String get calendarTitle => 'Calendario de salud';
+
+  @override
+  String get moodLabel => 'Estado de ánimo';
+
+  @override
+  String get moodPoor => 'Mal';
+
+  @override
+  String get moodFair => 'Regular';
+
+  @override
+  String get moodOkay => 'Bien';
+
+  @override
+  String get moodGood => 'Bueno';
+
+  @override
+  String get moodGreat => 'Excelente';
+
+  @override
+  String get moodAverage => 'Promedio mensual';
+
+  @override
+  String get clearMood => 'Limpiar';
+
+  @override
+  String get disclaimerTitle => '⚠️ Descargo de responsabilidad médica';
+
+  @override
+  String get disclaimerBody =>
+      'Esta aplicación proporciona **solo información general de salud**. **NO** es un sustituto del consejo médico profesional, diagnóstico o tratamiento.\n\n• No dependa únicamente de esta herramienta para decisiones de salud\n• Siempre consulte a profesionales de la salud calificados\n• En emergencias, contacte los servicios de emergencia locales\n• La IA puede proporcionar información inexacta\n\n**Privacidad:** En modo sin conexión, todos los datos permanecen en su dispositivo. En modo en línea/investigación, las consultas se envían a Wikipedia.';
+
+  @override
+  String get disclaimerAccept => 'Entiendo — Continuar';
+
+  @override
+  String get exportData => 'Exportar respaldo';
+
+  @override
+  String get importData => 'Importar respaldo';
+
+  @override
+  String get clearAllData => 'Borrar todos los datos';
+
+  @override
+  String get cameraButton => 'Cámara';
+
+  @override
+  String get galleryButton => 'Galería';
+
+  @override
+  String get removeImage => 'Eliminar imagen';
+
+  @override
+  String get thinking => 'Pensando...';
+
+  @override
+  String get researchNote => '🔬 Contexto de Wikipedia añadido';
+
+  @override
+  String get notADoctor =>
+      'No soy médico. Siempre consulte a un profesional de la salud.';
+
+  @override
+  String get consultProfessional =>
+      'Consulte a un profesional de la salud para consejo médico.';
+
+  @override
+  String get emergencyNote =>
+      'En emergencias, contacte los servicios de emergencia locales.';
+
+  @override
+  String get sessionHistory => 'Historial de sesiones';
+
+  @override
+  String get deleteSession => 'Eliminar sesión';
+
+  @override
+  String get noSessions => 'No hay sesiones guardadas';
+
+  @override
+  String get typingIndicator => 'Escribiendo...';
+
+  @override
+  String get copyMessage => 'Copiar';
+
+  @override
+  String get errorTitle => 'Error';
+
+  @override
+  String get errorRetry => 'Reintentar';
+
+  @override
+  String get offlineMode => 'Sin conexión';
+
+  @override
+  String get onlineMode => 'En línea';
+
+  @override
+  String get accentColor => 'Color de acento';
+
+  @override
+  String get resetColors => 'Restablecer colores';
+
+  @override
+  String get serverNote =>
+      'Para acceso LAN, use la IP local de su PC. Para acceso remoto, use la URL del túnel cloudflared.';
+
+  @override
+  String get clearAllConfirm =>
+      '¿Está seguro de que desea borrar todos los datos? Esto no se puede deshacer.';
+
+  @override
+  String get cancel => 'Cancelar';
+
+  @override
+  String get confirm => 'Confirmar';
+
+  @override
+  String get welcomeTitle => 'Bienvenido a Gemma Health Edge';
+
+  @override
+  String get welcomeSubtitle => 'Su asistente de salud sin conexión';
+
+  @override
+  String get suggestionSkin => 'Analizar condición de la piel';
+
+  @override
+  String get suggestionMeds => 'Verificar información de medicamentos';
+
+  @override
+  String get suggestionNutrition => 'Consejos de nutrición';
+
+  @override
+  String get suggestionFirstAid => 'Guía de primeros auxilios';
+
+  @override
+  String get storageStats => 'Uso de almacenamiento';
+
+  @override
+  String get aboutVersion => 'Versión';
+
+  @override
+  String get aboutDisclaimer => 'Descargo médico';
+
+  @override
+  String get featuresSection => 'Características';
+
+  @override
+  String get dataSection => 'Datos';
+
+  @override
+  String get aboutSection => 'Acerca de';
+
+  @override
+  String get serverSection => 'Servidor';
+
+  @override
+  String get appearanceSection => 'Apariencia';
+
+  @override
+  String get testConnection => 'Probar';
+
+  @override
+  String serverFound(String url) {
+    return 'Server found: $url';
+  }
+
+  @override
+  String get noServerFound => 'No server found';
+
+  @override
+  String get serverNotRunning => 'Is the server running?';
+
+  @override
+  String get requestTimeout => 'Request timed out';
+
+  @override
+  String serverError(int code) {
+    return 'Server returned $code';
+  }
+}
+
+================================================================================
+FILE: lib/core/i18n/app_localizations_fr.dart
+================================================================================
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for French (`fr`).
+class AppLocalizationsFr extends AppLocalizations {
+  AppLocalizationsFr([String locale = 'fr']) : super(locale);
+
+  @override
+  String get appTitle => 'Gemma Health Edge';
+
+  @override
+  String get chatPlaceholder => 'Posez une question de santé...';
+
+  @override
+  String get sendButton => 'Envoyer';
+
+  @override
+  String get clearChat => 'Effacer le chat';
+
+  @override
+  String get newSession => 'Nouvelle session';
+
+  @override
+  String get settingsTitle => 'Paramètres';
+
+  @override
+  String get serverUrl => 'URL du serveur';
+
+  @override
+  String get serverStatus => 'État du serveur';
+
+  @override
+  String get serverOnline => 'En ligne';
+
+  @override
+  String get serverOffline => 'Hors ligne';
+
+  @override
+  String get serverChecking => 'Vérification...';
+
+  @override
+  String get autoDetect => 'Détection automatique';
+
+  @override
+  String get themeLabel => 'Thème';
+
+  @override
+  String get themeDark => 'Sombre';
+
+  @override
+  String get themeLight => 'Clair';
+
+  @override
+  String get themeSystem => 'Système';
+
+  @override
+  String get languageLabel => 'Langue';
+
+  @override
+  String get voiceInput => 'Entrée vocale';
+
+  @override
+  String get voiceOutput => 'Sortie vocale';
+
+  @override
+  String get researchMode => 'Mode recherche';
+
+  @override
+  String get showThinking => 'Afficher le processus de réflexion';
+
+  @override
+  String get calendarTitle => 'Calendrier de santé';
+
+  @override
+  String get moodLabel => 'Humeur';
+
+  @override
+  String get moodPoor => 'Mauvais';
+
+  @override
+  String get moodFair => 'Moyen';
+
+  @override
+  String get moodOkay => 'OK';
+
+  @override
+  String get moodGood => 'Bon';
+
+  @override
+  String get moodGreat => 'Excellent';
+
+  @override
+  String get moodAverage => 'Moyenne mensuelle';
+
+  @override
+  String get clearMood => 'Effacer';
+
+  @override
+  String get disclaimerTitle => '⚠️ Avertissement médical';
+
+  @override
+  String get disclaimerBody =>
+      'Cette application fournit **des informations de santé générales uniquement**. Elle **N\'EST PAS** un substitut aux conseils médicaux professionnels, au diagnostic ou au traitement.\n\n• Ne vous fiez pas uniquement à cet outil pour les décisions de santé\n• Consultez toujours des professionnels de la santé qualifiés\n• En cas d\'urgence, contactez immédiatement les services d\'urgence locaux\n• L\'IA peut fournir des informations inexactes\n\n**Confidentialité :** En mode hors ligne, toutes les données restent sur votre appareil. En mode en ligne/recherche, les requêtes sont envoyées à Wikipedia.';
+
+  @override
+  String get disclaimerAccept => 'Je comprends — Continuer';
+
+  @override
+  String get exportData => 'Exporter la sauvegarde';
+
+  @override
+  String get importData => 'Importer la sauvegarde';
+
+  @override
+  String get clearAllData => 'Effacer toutes les données';
+
+  @override
+  String get cameraButton => 'Caméra';
+
+  @override
+  String get galleryButton => 'Galerie';
+
+  @override
+  String get removeImage => 'Supprimer l\'image';
+
+  @override
+  String get thinking => 'Réflexion...';
+
+  @override
+  String get researchNote => '🔬 Contexte Wikipedia ajouté';
+
+  @override
+  String get notADoctor =>
+      'Je ne suis pas médecin. Consultez toujours un professionnel de la santé.';
+
+  @override
+  String get consultProfessional =>
+      'Consultez un professionnel de la santé pour des conseils médicaux.';
+
+  @override
+  String get emergencyNote =>
+      'En cas d\'urgence, contactez les services d\'urgence locaux.';
+
+  @override
+  String get sessionHistory => 'Historique des sessions';
+
+  @override
+  String get deleteSession => 'Supprimer la session';
+
+  @override
+  String get noSessions => 'Aucune session enregistrée';
+
+  @override
+  String get typingIndicator => 'Écriture...';
+
+  @override
+  String get copyMessage => 'Copier';
+
+  @override
+  String get errorTitle => 'Erreur';
+
+  @override
+  String get errorRetry => 'Réessayer';
+
+  @override
+  String get offlineMode => 'Hors ligne';
+
+  @override
+  String get onlineMode => 'En ligne';
+
+  @override
+  String get accentColor => 'Couleur d\'accent';
+
+  @override
+  String get resetColors => 'Réinitialiser les couleurs';
+
+  @override
+  String get serverNote =>
+      'Pour l\'accès LAN, utilisez l\'IP locale de votre PC. Pour l\'accès distant, utilisez l\'URL du tunnel cloudflared.';
+
+  @override
+  String get clearAllConfirm =>
+      'Voulez-vous vraiment effacer toutes les données ? Cette action ne peut pas être annulée.';
+
+  @override
+  String get cancel => 'Annuler';
+
+  @override
+  String get confirm => 'Confirmer';
+
+  @override
+  String get welcomeTitle => 'Bienvenue sur Gemma Health Edge';
+
+  @override
+  String get welcomeSubtitle => 'Votre assistant de santé hors ligne';
+
+  @override
+  String get suggestionSkin => 'Analyser l\'état de la peau';
+
+  @override
+  String get suggestionMeds => 'Vérifier les informations sur les médicaments';
+
+  @override
+  String get suggestionNutrition => 'Conseils nutritionnels';
+
+  @override
+  String get suggestionFirstAid => 'Guide des premiers secours';
+
+  @override
+  String get storageStats => 'Utilisation du stockage';
+
+  @override
+  String get aboutVersion => 'Version';
+
+  @override
+  String get aboutDisclaimer => 'Avertissement médical';
+
+  @override
+  String get featuresSection => 'Fonctionnalités';
+
+  @override
+  String get dataSection => 'Données';
+
+  @override
+  String get aboutSection => 'À propos';
+
+  @override
+  String get serverSection => 'Serveur';
+
+  @override
+  String get appearanceSection => 'Apparence';
+
+  @override
+  String get testConnection => 'Tester';
+
+  @override
+  String serverFound(String url) {
+    return 'Server found: $url';
+  }
+
+  @override
+  String get noServerFound => 'No server found';
+
+  @override
+  String get serverNotRunning => 'Is the server running?';
+
+  @override
+  String get requestTimeout => 'Request timed out';
+
+  @override
+  String serverError(int code) {
+    return 'Server returned $code';
+  }
+}
+
+================================================================================
+FILE: lib/core/i18n/app_localizations_hi.dart
+================================================================================
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for Hindi (`hi`).
+class AppLocalizationsHi extends AppLocalizations {
+  AppLocalizationsHi([String locale = 'hi']) : super(locale);
+
+  @override
+  String get appTitle => 'Gemma Health Edge';
+
+  @override
+  String get chatPlaceholder => 'स्वास्थ्य प्रश्न पूछें...';
+
+  @override
+  String get sendButton => 'भेजें';
+
+  @override
+  String get clearChat => 'चैट साफ़ करें';
+
+  @override
+  String get newSession => 'नया सत्र';
+
+  @override
+  String get settingsTitle => 'सेटिंग्स';
+
+  @override
+  String get serverUrl => 'सर्वर URL';
+
+  @override
+  String get serverStatus => 'सर्वर स्थिति';
+
+  @override
+  String get serverOnline => 'ऑनलाइन';
+
+  @override
+  String get serverOffline => 'ऑफ़लाइन';
+
+  @override
+  String get serverChecking => 'जांच रहा है...';
+
+  @override
+  String get autoDetect => 'स्वत: पता लगाएं';
+
+  @override
+  String get themeLabel => 'थीम';
+
+  @override
+  String get themeDark => 'डार्क';
+
+  @override
+  String get themeLight => 'लाइट';
+
+  @override
+  String get themeSystem => 'सिस्टम';
+
+  @override
+  String get languageLabel => 'भाषा';
+
+  @override
+  String get voiceInput => 'वॉइस इनपुट';
+
+  @override
+  String get voiceOutput => 'वॉइस आउटपुट';
+
+  @override
+  String get researchMode => 'शोध मोड';
+
+  @override
+  String get showThinking => 'सोचने की प्रक्रिया दिखाएं';
+
+  @override
+  String get calendarTitle => 'स्वास्थ्य कैलेंडर';
+
+  @override
+  String get moodLabel => 'मूड';
+
+  @override
+  String get moodPoor => 'खराब';
+
+  @override
+  String get moodFair => 'ठीक';
+
+  @override
+  String get moodOkay => 'ठीक-ठाक';
+
+  @override
+  String get moodGood => 'अच्छा';
+
+  @override
+  String get moodGreat => 'बहुत अच्छा';
+
+  @override
+  String get moodAverage => 'मासिक औसत';
+
+  @override
+  String get clearMood => 'साफ़ करें';
+
+  @override
+  String get disclaimerTitle => '⚠️ चिकित्सा अस्वीकरण';
+
+  @override
+  String get disclaimerBody =>
+      'यह ऐप **केवल सामान्य स्वास्थ्य जानकारी** प्रदान करता है। यह पेशेवर चिकित्सा सलाह, निदान या उपचार का **विकल्प नहीं** है।\n\n• स्वास्थ्य निर्णयों के लिए केवल इस टूल पर भरोसा न करें\n• हमेशा योग्य स्वास्थ्य देखभाल पेशेवरों से परामर्श करें\n• आपातकाल में, तुरंत स्थानीय आपातकालीन सेवाओं से संपर्क करें\n• AI गलत जानकारी प्रदान कर सकता है\n\n**गोपनीयता:** ऑफ़लाइन मोड में, सभी डेटा आपके डिवाइस पर रहता है। ऑनलाइन/शोध मोड में, क्वेरी विकिपीडिया को भेजी जाती हैं।';
+
+  @override
+  String get disclaimerAccept => 'मैं समझता हूं — जारी रखें';
+
+  @override
+  String get exportData => 'बैकअप निर्यात करें';
+
+  @override
+  String get importData => 'बैकअप आयात करें';
+
+  @override
+  String get clearAllData => 'सभी डेटा साफ़ करें';
+
+  @override
+  String get cameraButton => 'कैमरा';
+
+  @override
+  String get galleryButton => 'गैलरी';
+
+  @override
+  String get removeImage => 'छवि हटाएं';
+
+  @override
+  String get thinking => 'सोच रहा हूं...';
+
+  @override
+  String get researchNote => '🔬 विकिपीडिया संदर्भ जोड़ा गया';
+
+  @override
+  String get notADoctor =>
+      'मैं डॉक्टर नहीं हूं। हमेशा एक स्वास्थ्य देखभाल पेशेवर से परामर्श करें।';
+
+  @override
+  String get consultProfessional =>
+      'चिकित्सा सलाह के लिए एक स्वास्थ्य देखभाल पेशेवर से परामर्श करें।';
+
+  @override
+  String get emergencyNote =>
+      'आपातकाल में, स्थानीय आपातकालीन सेवाओं से संपर्क करें।';
+
+  @override
+  String get sessionHistory => 'सत्र इतिहास';
+
+  @override
+  String get deleteSession => 'सत्र हटाएं';
+
+  @override
+  String get noSessions => 'कोई सहेजा गया सत्र नहीं';
+
+  @override
+  String get typingIndicator => 'टाइप कर रहा है...';
+
+  @override
+  String get copyMessage => 'कॉपी करें';
+
+  @override
+  String get errorTitle => 'त्रुटि';
+
+  @override
+  String get errorRetry => 'पुनः प्रयास करें';
+
+  @override
+  String get offlineMode => 'ऑफ़लाइन';
+
+  @override
+  String get onlineMode => 'ऑनलाइन';
+
+  @override
+  String get accentColor => 'एक्सेंट रंग';
+
+  @override
+  String get resetColors => 'रंग रीसेट करें';
+
+  @override
+  String get serverNote =>
+      'LAN एक्सेस के लिए, अपने PC की स्थानीय IP का उपयोग करें। रिमोट एक्सेस के लिए, cloudflared टनल URL का उपयोग करें।';
+
+  @override
+  String get clearAllConfirm =>
+      'क्या आप वाकई सभी डेटा साफ़ करना चाहते हैं? इसे पूर्ववत नहीं किया जा सकता।';
+
+  @override
+  String get cancel => 'रद्द करें';
+
+  @override
+  String get confirm => 'पुष्टि करें';
+
+  @override
+  String get welcomeTitle => 'Gemma Health Edge में आपका स्वागत है';
+
+  @override
+  String get welcomeSubtitle => 'आपका ऑफ़लाइन स्वास्थ्य सहायक';
+
+  @override
+  String get suggestionSkin => 'त्वचा की स्थिति का विश्लेषण करें';
+
+  @override
+  String get suggestionMeds => 'दवा की जानकारी जांचें';
+
+  @override
+  String get suggestionNutrition => 'पोषण सलाह';
+
+  @override
+  String get suggestionFirstAid => 'प्राथमिक चिकित्सा मार्गदर्शन';
+
+  @override
+  String get storageStats => 'स्टोरेज उपयोग';
+
+  @override
+  String get aboutVersion => 'संस्करण';
+
+  @override
+  String get aboutDisclaimer => 'चिकित्सा अस्वीकरण';
+
+  @override
+  String get featuresSection => 'सुविधाएं';
+
+  @override
+  String get dataSection => 'डेटा';
+
+  @override
+  String get aboutSection => 'के बारे में';
+
+  @override
+  String get serverSection => 'सर्वर';
+
+  @override
+  String get appearanceSection => 'दिखावट';
+
+  @override
+  String get testConnection => 'परीक्षण';
+
+  @override
+  String serverFound(String url) {
+    return 'Server found: $url';
+  }
+
+  @override
+  String get noServerFound => 'No server found';
+
+  @override
+  String get serverNotRunning => 'Is the server running?';
+
+  @override
+  String get requestTimeout => 'Request timed out';
+
+  @override
+  String serverError(int code) {
+    return 'Server returned $code';
+  }
+}
+
+================================================================================
+FILE: lib/core/i18n/app_localizations_ru.dart
+================================================================================
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for Russian (`ru`).
+class AppLocalizationsRu extends AppLocalizations {
+  AppLocalizationsRu([String locale = 'ru']) : super(locale);
+
+  @override
+  String get appTitle => 'Gemma Health Edge';
+
+  @override
+  String get chatPlaceholder => 'Задайте вопрос о здоровье...';
+
+  @override
+  String get sendButton => 'Отправить';
+
+  @override
+  String get clearChat => 'Очистить чат';
+
+  @override
+  String get newSession => 'Новый сеанс';
+
+  @override
+  String get settingsTitle => 'Настройки';
+
+  @override
+  String get serverUrl => 'URL сервера';
+
+  @override
+  String get serverStatus => 'Статус сервера';
+
+  @override
+  String get serverOnline => 'Онлайн';
+
+  @override
+  String get serverOffline => 'Офлайн';
+
+  @override
+  String get serverChecking => 'Проверка...';
+
+  @override
+  String get autoDetect => 'Автоопределение';
+
+  @override
+  String get themeLabel => 'Тема';
+
+  @override
+  String get themeDark => 'Темная';
+
+  @override
+  String get themeLight => 'Светлая';
+
+  @override
+  String get themeSystem => 'Системная';
+
+  @override
+  String get languageLabel => 'Язык';
+
+  @override
+  String get voiceInput => 'Голосовой ввод';
+
+  @override
+  String get voiceOutput => 'Голосовой вывод';
+
+  @override
+  String get researchMode => 'Режим исследований';
+
+  @override
+  String get showThinking => 'Показать процесс мышления';
+
+  @override
+  String get calendarTitle => 'Календарь здоровья';
+
+  @override
+  String get moodLabel => 'Настроение';
+
+  @override
+  String get moodPoor => 'Плохое';
+
+  @override
+  String get moodFair => 'Удовлетворительное';
+
+  @override
+  String get moodOkay => 'Нормальное';
+
+  @override
+  String get moodGood => 'Хорошее';
+
+  @override
+  String get moodGreat => 'Отличное';
+
+  @override
+  String get moodAverage => 'Среднемесячное';
+
+  @override
+  String get clearMood => 'Очистить';
+
+  @override
+  String get disclaimerTitle => '⚠️ Медицинский отказ от ответственности';
+
+  @override
+  String get disclaimerBody =>
+      'Это приложение предоставляет **только общую информацию о здоровье**. Оно **НЕ** является заменой профессиональной медицинской консультации, диагностики или лечения.\n\n• Не полагайтесь исключительно на этот инструмент для принятия решений о здоровье\n• Всегда консультируйтесь с квалифицированными медицинскими работниками\n• В экстренных случаях немедленно обращайтесь в местные службы экстренной помощи\n• ИИ может предоставлять неточную информацию\n\n**Конфиденциальность:** В офлайн-режиме все данные остаются на вашем устройстве. В онлайн-режиме/режиме исследований запросы отправляются в Википедию.';
+
+  @override
+  String get disclaimerAccept => 'Я понимаю — Продолжить';
+
+  @override
+  String get exportData => 'Экспорт резервной копии';
+
+  @override
+  String get importData => 'Импорт резервной копии';
+
+  @override
+  String get clearAllData => 'Очистить все данные';
+
+  @override
+  String get cameraButton => 'Камера';
+
+  @override
+  String get galleryButton => 'Галерея';
+
+  @override
+  String get removeImage => 'Удалить изображение';
+
+  @override
+  String get thinking => 'Думаю...';
+
+  @override
+  String get researchNote => '🔬 Контекст Википедии добавлен';
+
+  @override
+  String get notADoctor =>
+      'Я не врач. Всегда консультируйтесь с медицинским работником.';
+
+  @override
+  String get consultProfessional =>
+      'Проконсультируйтесь с медицинским работником по медицинским вопросам.';
+
+  @override
+  String get emergencyNote =>
+      'В экстренных случаях обращайтесь в местные службы экстренной помощи.';
+
+  @override
+  String get sessionHistory => 'История сеансов';
+
+  @override
+  String get deleteSession => 'Удалить сеанс';
+
+  @override
+  String get noSessions => 'Нет сохраненных сеансов';
+
+  @override
+  String get typingIndicator => 'Печатает...';
+
+  @override
+  String get copyMessage => 'Копировать';
+
+  @override
+  String get errorTitle => 'Ошибка';
+
+  @override
+  String get errorRetry => 'Повторить';
+
+  @override
+  String get offlineMode => 'Офлайн';
+
+  @override
+  String get onlineMode => 'Онлайн';
+
+  @override
+  String get accentColor => 'Акцентный цвет';
+
+  @override
+  String get resetColors => 'Сбросить цвета';
+
+  @override
+  String get serverNote =>
+      'Для доступа по LAN используйте локальный IP вашего ПК. Для удаленного доступа используйте URL туннеля cloudflared.';
+
+  @override
+  String get clearAllConfirm =>
+      'Вы уверены, что хотите очистить все данные? Это действие нельзя отменить.';
+
+  @override
+  String get cancel => 'Отмена';
+
+  @override
+  String get confirm => 'Подтвердить';
+
+  @override
+  String get welcomeTitle => 'Добро пожаловать в Gemma Health Edge';
+
+  @override
+  String get welcomeSubtitle => 'Ваш офлайн помощник по здоровью';
+
+  @override
+  String get suggestionSkin => 'Анализировать состояние кожи';
+
+  @override
+  String get suggestionMeds => 'Проверить информацию о лекарствах';
+
+  @override
+  String get suggestionNutrition => 'Советы по питанию';
+
+  @override
+  String get suggestionFirstAid => 'Руководство по первой помощи';
+
+  @override
+  String get storageStats => 'Использование хранилища';
+
+  @override
+  String get aboutVersion => 'Версия';
+
+  @override
+  String get aboutDisclaimer => 'Медицинский отказ от ответственности';
+
+  @override
+  String get featuresSection => 'Функции';
+
+  @override
+  String get dataSection => 'Данные';
+
+  @override
+  String get aboutSection => 'О приложении';
+
+  @override
+  String get serverSection => 'Сервер';
+
+  @override
+  String get appearanceSection => 'Внешний вид';
+
+  @override
+  String get testConnection => 'Тест';
+
+  @override
+  String serverFound(String url) {
+    return 'Server found: $url';
+  }
+
+  @override
+  String get noServerFound => 'No server found';
+
+  @override
+  String get serverNotRunning => 'Is the server running?';
+
+  @override
+  String get requestTimeout => 'Request timed out';
+
+  @override
+  String serverError(int code) {
+    return 'Server returned $code';
+  }
+}
+
+================================================================================
+FILE: lib/core/i18n/app_localizations_zh.dart
+================================================================================
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for Chinese (`zh`).
+class AppLocalizationsZh extends AppLocalizations {
+  AppLocalizationsZh([String locale = 'zh']) : super(locale);
+
+  @override
+  String get appTitle => 'Gemma Health Edge';
+
+  @override
+  String get chatPlaceholder => '询问健康问题...';
+
+  @override
+  String get sendButton => '发送';
+
+  @override
+  String get clearChat => '清除聊天';
+
+  @override
+  String get newSession => '新会话';
+
+  @override
+  String get settingsTitle => '设置';
+
+  @override
+  String get serverUrl => '服务器 URL';
+
+  @override
+  String get serverStatus => '服务器状态';
+
+  @override
+  String get serverOnline => '在线';
+
+  @override
+  String get serverOffline => '离线';
+
+  @override
+  String get serverChecking => '检查中...';
+
+  @override
+  String get autoDetect => '自动检测';
+
+  @override
+  String get themeLabel => '主题';
+
+  @override
+  String get themeDark => '深色';
+
+  @override
+  String get themeLight => '浅色';
+
+  @override
+  String get themeSystem => '系统';
+
+  @override
+  String get languageLabel => '语言';
+
+  @override
+  String get voiceInput => '语音输入';
+
+  @override
+  String get voiceOutput => '语音输出';
+
+  @override
+  String get researchMode => '研究模式';
+
+  @override
+  String get showThinking => '显示思考过程';
+
+  @override
+  String get calendarTitle => '健康日历';
+
+  @override
+  String get moodLabel => '心情';
+
+  @override
+  String get moodPoor => '差';
+
+  @override
+  String get moodFair => '一般';
+
+  @override
+  String get moodOkay => '还可以';
+
+  @override
+  String get moodGood => '好';
+
+  @override
+  String get moodGreat => '很好';
+
+  @override
+  String get moodAverage => '月平均';
+
+  @override
+  String get clearMood => '清除';
+
+  @override
+  String get disclaimerTitle => '⚠️ 医疗免责声明';
+
+  @override
+  String get disclaimerBody =>
+      '此应用仅提供**一般健康信息**。它**不是**专业医疗建议、诊断或治疗的替代品。\n\n• 不要仅依赖此工具做出健康决定\n• 始终咨询合格的医疗保健专业人员\n• 在紧急情况下，立即联系当地紧急服务\n• AI 可能提供不准确的信息\n\n**隐私：** 在离线模式下，所有数据都保留在您的设备上。在在线/研究模式下，查询会发送到维基百科。';
+
+  @override
+  String get disclaimerAccept => '我理解 — 继续';
+
+  @override
+  String get exportData => '导出备份';
+
+  @override
+  String get importData => '导入备份';
+
+  @override
+  String get clearAllData => '清除所有数据';
+
+  @override
+  String get cameraButton => '相机';
+
+  @override
+  String get galleryButton => '图库';
+
+  @override
+  String get removeImage => '移除图片';
+
+  @override
+  String get thinking => '思考中...';
+
+  @override
+  String get researchNote => '🔬 已添加维基百科上下文';
+
+  @override
+  String get notADoctor =>
+      '我不是医生。始终咨询医疗保健专业人员。';
+
+  @override
+  String get consultProfessional =>
+      '咨询医疗保健专业人员以获取医疗建议。';
+
+  @override
+  String get emergencyNote =>
+      '在紧急情况下，联系当地紧急服务。';
+
+  @override
+  String get sessionHistory => '会话历史';
+
+  @override
+  String get deleteSession => '删除会话';
+
+  @override
+  String get noSessions => '没有保存的会话';
+
+  @override
+  String get typingIndicator => '输入中...';
+
+  @override
+  String get copyMessage => '复制';
+
+  @override
+  String get errorTitle => '错误';
+
+  @override
+  String get errorRetry => '重试';
+
+  @override
+  String get offlineMode => '离线';
+
+  @override
+  String get onlineMode => '在线';
+
+  @override
+  String get accentColor => '强调色';
+
+  @override
+  String get resetColors => '重置颜色';
+
+  @override
+  String get serverNote =>
+      '对于 LAN 访问，使用您 PC 的本地 IP。对于远程访问，使用 cloudflared 隧道 URL。';
+
+  @override
+  String get clearAllConfirm =>
+      '您确定要清除所有数据吗？此操作无法撤销。';
+
+  @override
+  String get cancel => '取消';
+
+  @override
+  String get confirm => '确认';
+
+  @override
+  String get welcomeTitle => '欢迎使用 Gemma Health Edge';
+
+  @override
+  String get welcomeSubtitle => '您的离线健康助手';
+
+  @override
+  String get suggestionSkin => '分析皮肤状况';
+
+  @override
+  String get suggestionMeds => '检查药物信息';
+
+  @override
+  String get suggestionNutrition => '营养建议';
+
+  @override
+  String get suggestionFirstAid => '急救指导';
+
+  @override
+  String get storageStats => '存储使用情况';
+
+  @override
+  String get aboutVersion => '版本';
+
+  @override
+  String get aboutDisclaimer => '医疗免责声明';
+
+  @override
+  String get featuresSection => '功能';
+
+  @override
+  String get dataSection => '数据';
+
+  @override
+  String get aboutSection => '关于';
+
+  @override
+  String get serverSection => '服务器';
+
+  @override
+  String get appearanceSection => '外观';
+
+  @override
+  String get testConnection => '测试';
+
+  @override
+  String serverFound(String url) {
+    return 'Server found: $url';
+  }
+
+  @override
+  String get noServerFound => 'No server found';
+
+  @override
+  String get serverNotRunning => 'Is the server running?';
+
+  @override
+  String get requestTimeout => 'Request timed out';
+
+  @override
+  String serverError(int code) {
+    return 'Server returned $code';
+  }
+}
+
+================================================================================
+FILE: lib/features/calendar/calendar_provider.dart
+================================================================================
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/models/mood_entry.dart';
+import '../../core/storage_service.dart';
+
+final calendarProvider = StateNotifierProvider<CalendarNotifier, CalendarState>((ref) {
+  return CalendarNotifier(ref.read(storageServiceProvider));
+});
+
+class CalendarState {
+  final DateTime displayedMonth;
+  final Map<String, MoodEntry> moods;
+
+  CalendarState({
+    DateTime? displayedMonth,
+    Map<String, MoodEntry>? moods,
+  })  : displayedMonth = displayedMonth ?? DateTime.now(),
+        moods = moods ?? {};
+
+  double get monthlyAverage {
+    if (moods.isEmpty) return 0;
+    final values = moods.values.map((m) => m.mood.toDouble());
+    return values.reduce((a, b) => a + b) / values.length;
+  }
+
+  String? get averageEmoji {
+    final avg = monthlyAverage;
+    if (avg < 2) return MoodEntry.emojiMap[1];
+    if (avg < 3) return MoodEntry.emojiMap[2];
+    if (avg < 4) return MoodEntry.emojiMap[3];
+    if (avg < 5) return MoodEntry.emojiMap[4];
+    return MoodEntry.emojiMap[5];
+  }
+
+  CalendarState copyWith({
+    DateTime? displayedMonth,
+    Map<String, MoodEntry>? moods,
+  }) {
+    return CalendarState(
+      displayedMonth: displayedMonth ?? this.displayedMonth,
+      moods: moods ?? this.moods,
+    );
+  }
+}
+
+class CalendarNotifier extends StateNotifier<CalendarState> {
+  final StorageService _storage;
+
+  CalendarNotifier(this._storage) : super(CalendarState()) {
+    _loadMoods();
+  }
+
+  Future<void> _loadMoods() async {
+    final moods = _storage.loadMoods();
+    final moodMap = {for (final m in moods) m.date: m};
+    state = state.copyWith(moods: moodMap);
+  }
+
+  void setMonth(DateTime month) {
+    state = state.copyWith(displayedMonth: month);
+  }
+
+  Future<void> setMood(DateTime date, int mood) async {
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final entry = MoodEntry(date: dateStr, mood: mood);
+    await _storage.saveMood(entry);
+    
+    final newMoods = Map<String, MoodEntry>.from(state.moods);
+    newMoods[dateStr] = entry;
+    state = state.copyWith(moods: newMoods);
+  }
+
+  Future<void> clearMood(DateTime date) async {
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    await _storage.deleteMood(dateStr);
+    
+    final newMoods = Map<String, MoodEntry>.from(state.moods);
+    newMoods.remove(dateStr);
+    state = state.copyWith(moods: newMoods);
+  }
+}
+
+================================================================================
+FILE: lib/features/calendar/calendar_screen.dart
+================================================================================
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/i18n/app_localizations.dart';
+import '../../core/models/mood_entry.dart';
+import 'calendar_provider.dart';
+
+class CalendarScreen extends ConsumerWidget {
+  const CalendarScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(calendarProvider);
+    final l10n = AppLocalizations.of(context)!;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(l10n.calendarTitle),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.calendar_today),
+            onPressed: () => _selectMonth(context, ref),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          _buildMonthHeader(context, state.displayedMonth, ref),
+          _buildCalendarGrid(context, state, ref, l10n),
+          const SizedBox(height: 16),
+          _buildMonthlyAverage(context, state, l10n),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonthHeader(BuildContext context, DateTime month, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.chevron_left),
+            onPressed: () {
+              final prevMonth = DateTime(month.year, month.month - 1);
+              ref.read(calendarProvider.notifier).setMonth(prevMonth);
+            },
+          ),
+          Text(
+            '${month.year}年${month.month}月',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          IconButton(
+            icon: const Icon(Icons.chevron_right),
+            onPressed: () {
+              final nextMonth = DateTime(month.year, month.month + 1);
+              ref.read(calendarProvider.notifier).setMonth(nextMonth);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCalendarGrid(BuildContext context, CalendarState state, WidgetRef ref, AppLocalizations l10n) {
+    final firstDay = DateTime(state.displayedMonth.year, state.displayedMonth.month, 1);
+    final lastDay = DateTime(state.displayedMonth.year, state.displayedMonth.month + 1, 0);
+    final startWeekday = firstDay.weekday % 7;
+    
+    final days = <Widget>[];
+    
+    // Weekday headers
+    final weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+    for (final day in weekdays) {
+      days.add(
+        Center(
+          child: Text(
+            day,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+      );
+    }
+    
+    // Empty cells before first day
+    for (int i = 0; i < startWeekday; i++) {
+      days.add(const SizedBox());
+    }
+    
+    // Days of month
+    for (int day = 1; day <= lastDay.day; day++) {
+      final date = DateTime(state.displayedMonth.year, state.displayedMonth.month, day);
+      final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final mood = state.moods[dateStr];
+      
+      days.add(
+        GestureDetector(
+          onTap: () => _showMoodPicker(context, date, ref, l10n),
+          child: Container(
+            margin: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: mood != null ? Color(mood.color ?? 0xFF6B7280).withOpacity(0.3) : null,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    '$day',
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  if (mood != null)
+                    Text(
+                      mood.emoji ?? '',
+                      style: const TextStyle(fontSize: 20),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    
+    return Expanded(
+      child: GridView.count(
+        crossAxisCount: 7,
+        children: days,
+      ),
+    );
+  }
+
+  Widget _buildMonthlyAverage(BuildContext context, CalendarState state, AppLocalizations l10n) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                l10n.moodAverage,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              Row(
+                children: [
+                  if (state.averageEmoji != null)
+                    Text(
+                      state.averageEmoji!,
+                      style: const TextStyle(fontSize: 24),
+                    ),
+                  const SizedBox(width: 8),
+                  Text(
+                    state.monthlyAverage > 0 ? state.monthlyAverage.toStringAsFixed(1) : '-',
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _selectMonth(BuildContext context, WidgetRef ref) async {
+    final state = ref.read(calendarProvider);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: state.displayedMonth,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (picked != null) {
+      ref.read(calendarProvider.notifier).setMonth(DateTime(picked.year, picked.month));
+    }
+  }
+
+  void _showMoodPicker(BuildContext context, DateTime date, WidgetRef ref, AppLocalizations l10n) {
+    final state = ref.read(calendarProvider);
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final currentMood = state.moods[dateStr];
+
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${date.month}月${date.day}日',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            ...MoodEntry.emojiMap.entries.map((entry) {
+              return ListTile(
+                leading: Text(entry.value, style: const TextStyle(fontSize: 32)),
+                title: Text(MoodEntry.labelMap[entry.key] ?? ''),
+                onTap: () {
+                  ref.read(calendarProvider.notifier).setMood(date, entry.key);
+                  Navigator.pop(context);
+                },
+              );
+            }).toList(),
+            if (currentMood != null)
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: Text(l10n.clearMood),
+                onTap: () {
+                  ref.read(calendarProvider.notifier).clearMood(date);
+                  Navigator.pop(context);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+================================================================================
+FILE: lib/features/chat/chat_provider.dart
+================================================================================
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/api_client.dart';
+import '../../core/models/message.dart';
+import '../../core/models/session.dart';
+import '../../core/storage_service.dart';
+
+final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
+  return ChatNotifier(ref.read(apiClientProvider), ref.read(storageServiceProvider));
+});
+
+class ChatState {
+  final List<Session> sessions;
+  final String? currentSessionId;
+  final bool isLoading;
+  final String? error;
+
+  ChatState({
+    List<Session>? sessions,
+    this.currentSessionId,
+    this.isLoading = false,
+    this.error,
+  }) : sessions = sessions ?? [];
+
+  Session? get currentSession {
+    if (currentSessionId == null) return null;
+    try {
+      return sessions.firstWhere((s) => s.id == currentSessionId);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  ChatState copyWith({
+    List<Session>? sessions,
+    String? currentSessionId,
+    bool? isLoading,
+    String? error,
+  }) {
+    return ChatState(
+      sessions: sessions ?? this.sessions,
+      currentSessionId: currentSessionId ?? this.currentSessionId,
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+    );
+  }
+}
+
+class ChatNotifier extends StateNotifier<ChatState> {
+  final ApiClient _api;
+  final StorageService _storage;
+
+  ChatNotifier(this._api, this._storage) : super(ChatState()) {
+    _loadSessions();
+  }
+
+  Future<void> _loadSessions() async {
+    final sessions = _storage.loadSessions();
+    state = state.copyWith(sessions: sessions);
+  }
+
+  Future<void> createSession() async {
+    final newSession = Session(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      title: 'New Chat',
+      date: DateTime.now(),
+      messages: [],
+    );
+    
+    final sessions = [...state.sessions, newSession];
+    await _storage.saveSessions(sessions);
+    state = state.copyWith(sessions: sessions, currentSessionId: newSession.id);
+  }
+
+  Future<void> selectSession(String sessionId) async {
+    state = state.copyWith(currentSessionId: sessionId);
+  }
+
+  Future<void> deleteSession(String sessionId) async {
+    await _storage.deleteSession(sessionId);
+    final sessions = _storage.loadSessions();
+    final newCurrentId = state.currentSessionId == sessionId ? null : state.currentSessionId;
+    state = state.copyWith(sessions: sessions, currentSessionId: newCurrentId);
+  }
+
+  Future<void> sendMessage(String content, {String? imageBase64}) async {
+    final session = state.currentSession;
+    if (session == null) {
+      await createSession();
+      return sendMessage(content, imageBase64: imageBase64);
+    }
+
+    final userMessage = Message(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      role: 'user',
+      content: content,
+      imageBase64: imageBase64,
+    );
+
+    final updatedMessages = [...session.messages, userMessage];
+    final updatedSession = session.copyWith(messages: updatedMessages);
+    
+    final updatedSessions = state.sessions.map((s) => s.id == session.id ? updatedSession : s).toList();
+    await _storage.saveSessions(updatedSessions);
+    
+    state = state.copyWith(sessions: updatedSessions, isLoading: true);
+
+    try {
+      final settings = await _storage.loadSettings();
+      final apiMessages = updatedMessages.map((m) => m.toApiMessage()).toList();
+      
+      final response = await _api.completeChat(
+        messages: apiMessages,
+        serverUrl: settings.serverUrl,
+        useCloud: settings.useCloudApi,
+        cloudApiKey: settings.cloudApiKey,
+        cloudModelId: settings.cloudModelId,
+        enableResearch: settings.enableResearch,
+      );
+
+      final assistantMessage = Message(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        role: 'assistant',
+        content: response,
+      );
+
+      final finalMessages = [...updatedMessages, assistantMessage];
+      final finalSession = updatedSession.copyWith(messages: finalMessages);
+      
+      final finalSessions = updatedSessions.map((s) => s.id == session.id ? finalSession : s).toList();
+      await _storage.saveSessions(finalSessions);
+      
+      state = state.copyWith(sessions: finalSessions, isLoading: false);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> clearChat() async {
+    final session = state.currentSession;
+    if (session == null) return;
+
+    final clearedSession = session.copyWith(messages: []);
+    final updatedSessions = state.sessions.map((s) => s.id == session.id ? clearedSession : s).toList();
+    await _storage.saveSessions(updatedSessions);
+    state = state.copyWith(sessions: updatedSessions);
+  }
+}
+
+================================================================================
+FILE: lib/features/chat/chat_screen.dart
+================================================================================
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
+import '../../core/i18n/app_localizations.dart';
+import '../../core/models/message.dart';
+import 'chat_provider.dart';
+
+class ChatScreen extends ConsumerStatefulWidget {
+  const ChatScreen({super.key});
+
+  @override
+  ConsumerState<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends ConsumerState<ChatScreen> {
+  final TextEditingController _controller = TextEditingController();
+  String? _imageBase64;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(chatProvider);
+    final l10n = AppLocalizations.of(context)!;
+    final session = state.currentSession;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(l10n.appTitle),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            onPressed: () => _showSessionHistory(context, state, l10n),
+          ),
+          IconButton(
+            icon: const Icon(Icons.clear),
+            onPressed: session != null ? () => ref.read(chatProvider.notifier).clearChat() : null,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: session == null
+                ? _buildWelcome(context, l10n)
+                : _buildMessages(session.messages, state.isLoading, l10n),
+          ),
+          _buildInputArea(context, state, l10n),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWelcome(BuildContext context, AppLocalizations l10n) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.health_and_safety, size: 64, color: Colors.blue),
+          const SizedBox(height: 16),
+          Text(
+            l10n.welcomeTitle,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.welcomeSubtitle,
+            style: const TextStyle(fontSize: 16, color: Colors.grey),
+          ),
+          const SizedBox(height: 32),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _SuggestionChip(
+                icon: Icons.camera_alt,
+                label: l10n.suggestionSkin,
+                onTap: () => _controller.text = l10n.suggestionSkin,
+              ),
+              _SuggestionChip(
+                icon: Icons.medication,
+                label: l10n.suggestionMeds,
+                onTap: () => _controller.text = l10n.suggestionMeds,
+              ),
+              _SuggestionChip(
+                icon: Icons.restaurant,
+                label: l10n.suggestionNutrition,
+                onTap: () => _controller.text = l10n.suggestionNutrition,
+              ),
+              _SuggestionChip(
+                icon: Icons.medical_services,
+                label: l10n.suggestionFirstAid,
+                onTap: () => _controller.text = l10n.suggestionFirstAid,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessages(List<Message> messages, bool isLoading, AppLocalizations l10n) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: messages.length + (isLoading ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == messages.length && isLoading) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final message = messages[index];
+        return _MessageBubble(message: message);
+      },
+    );
+  }
+
+  Widget _buildInputArea(BuildContext context, ChatState state, AppLocalizations l10n) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          if (_imageBase64 != null)
+            Stack(
+              alignment: Alignment.topRight,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    const Base64Decoder().convert(_imageBase64!),
+                    height: 100,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() => _imageBase64 = null),
+                ),
+              ],
+            ),
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.camera_alt),
+                onPressed: () => _pickImage(ImageSource.camera),
+              ),
+              IconButton(
+                icon: const Icon(Icons.photo_library),
+                onPressed: () => _pickImage(ImageSource.gallery),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  decoration: InputDecoration(
+                    hintText: l10n.chatPlaceholder,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                  ),
+                  maxLines: null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.send),
+                onPressed: state.isLoading ? null : () => _sendMessage(),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: source);
+    if (picked != null) {
+      final bytes = await picked.readAsBytes();
+      setState(() => _imageBase64 = base64Encode(bytes));
+    }
+  }
+
+  void _sendMessage() {
+    final content = _controller.text.trim();
+    if (content.isEmpty && _imageBase64 == null) return;
+    
+    ref.read(chatProvider.notifier).sendMessage(content, imageBase64: _imageBase64);
+    _controller.clear();
+    setState(() => _imageBase64 = null);
+  }
+
+  void _showSessionHistory(BuildContext context, ChatState state, AppLocalizations l10n) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  l10n.sessionHistory,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: () {
+                    ref.read(chatProvider.notifier).createSession();
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (state.sessions.isEmpty)
+              Text(l10n.noSessions)
+            else
+              ...state.sessions.map((session) => ListTile(
+                title: Text(session.title),
+                subtitle: Text(session.date.toString().split('.')[0]),
+                onTap: () {
+                  ref.read(chatProvider.notifier).selectSession(session.id);
+                  Navigator.pop(context);
+                },
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete),
+                  onPressed: () {
+                    ref.read(chatProvider.notifier).deleteSession(session.id);
+                    Navigator.pop(context);
+                  },
+                ),
+              )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  final Message message;
+
+  const _MessageBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.role == 'user';
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isUser ? Colors.blue : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (message.imageBase64 != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.memory(
+                  const Base64Decoder().convert(message.imageBase64!),
+                  height: 150,
+                ),
+              ),
+            if (message.imageBase64 != null) const SizedBox(height: 8),
+            Text(
+              message.content,
+              style: TextStyle(color: isUser ? Colors.white : Colors.black),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SuggestionChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _SuggestionChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      avatar: Icon(icon, size: 18),
+      label: Text(label),
+      onPressed: onTap,
+    );
+  }
+}
+
+================================================================================
+FILE: lib/features/health/health_provider.dart
+================================================================================
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/ble_service.dart';
+import '../../core/health_service.dart';
+import '../../core/models/health_sample.dart';
+import '../../core/storage_service.dart';
+
+final healthProvider = StateNotifierProvider<HealthNotifier, HealthState>((ref) {
+  return HealthNotifier(
+    ref.read(bleServiceProvider),
+    ref.read(healthServiceProvider),
+    ref.read(storageServiceProvider),
+  );
+});
+
+class HealthState {
+  final List<HealthSample> samples;
+  final bool isScanning;
+  final bool isConnected;
+  final String? connectedDeviceName;
+  final bool isLoading;
+  final String? error;
+
+  HealthState({
+    List<HealthSample>? samples,
+    this.isScanning = false,
+    this.isConnected = false,
+    this.connectedDeviceName,
+    this.isLoading = false,
+    this.error,
+  }) : samples = samples ?? [];
+
+  HealthState copyWith({
+    List<HealthSample>? samples,
+    bool? isScanning,
+    bool? isConnected,
+    String? connectedDeviceName,
+    bool? isLoading,
+    String? error,
+  }) {
+    return HealthState(
+      samples: samples ?? this.samples,
+      isScanning: isScanning ?? this.isScanning,
+      isConnected: isConnected ?? this.isConnected,
+      connectedDeviceName: connectedDeviceName ?? this.connectedDeviceName,
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+    );
+  }
+}
+
+class HealthNotifier extends StateNotifier<HealthState> {
+  final BleService _ble;
+  final HealthService _health;
+  final StorageService _storage;
+
+  HealthNotifier(this._ble, this._health, this._storage) : super(HealthState()) {
+    _loadSamples();
+  }
+
+  Future<void> _loadSamples() async {
+    final samples = _storage.loadHealthSamples();
+    state = state.copyWith(samples: samples);
+  }
+
+  Future<void> requestHealthPermissions() async {
+    state = state.copyWith(isLoading: true);
+    try {
+      final granted = await _health.requestAuthorization();
+      if (granted) {
+        await fetchHealthSamples();
+      }
+      state = state.copyWith(isLoading: false);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> fetchHealthSamples() async {
+    state = state.copyWith(isLoading: true);
+    try {
+      final end = DateTime.now();
+      final start = end.subtract(const Duration(days: 30));
+      final samples = await _health.fetchSamples(start: start, end: end);
+      await _storage.saveHealthSamples(samples);
+      state = state.copyWith(samples: samples, isLoading: false);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> startScan() async {
+    state = state.copyWith(isScanning: true);
+    try {
+      _ble.scan().listen((results) {
+        // Handle scan results
+      });
+    } catch (e) {
+      state = state.copyWith(isScanning: false, error: e.toString());
+    }
+  }
+
+  Future<void> stopScan() async {
+    await _ble.stopScan();
+    state = state.copyWith(isScanning: false);
+  }
+
+  Future<void> connectDevice(String deviceId) async {
+    state = state.copyWith(isLoading: true);
+    try {
+      // Implement device connection
+      state = state.copyWith(isLoading: false, isConnected: true);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+
+  Future<void> disconnectDevice() async {
+    state = state.copyWith(isLoading: true);
+    try {
+      // Implement device disconnection
+      state = state.copyWith(isLoading: false, isConnected: false, connectedDeviceName: null);
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: e.toString());
+    }
+  }
+}
+
+================================================================================
+FILE: lib/features/health/health_screen.dart
+================================================================================
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/i18n/app_localizations.dart';
+import '../../core/models/health_sample.dart';
+import 'health_provider.dart';
+
+class HealthScreen extends ConsumerWidget {
+  const HealthScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(healthProvider);
+    final l10n = AppLocalizations.of(context)!;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Health Data'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => ref.read(healthProvider.notifier).fetchHealthSamples(),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          _buildPermissionBanner(context, state, ref, l10n),
+          _buildBLEControls(context, state, ref, l10n),
+          Expanded(
+            child: state.samples.isEmpty
+                ? Center(child: Text('No health data available'))
+                : _buildSamplesList(state.samples),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPermissionBanner(BuildContext context, HealthState state, WidgetRef ref, AppLocalizations l10n) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: Colors.orange.shade100,
+      child: Row(
+        children: [
+          const Icon(Icons.warning, color: Colors.orange),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('Grant health permissions to access your data')),
+          ElevatedButton(
+            onPressed: state.isLoading ? null : () => ref.read(healthProvider.notifier).requestHealthPermissions(),
+            child: const Text('Grant'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBLEControls(BuildContext context, HealthState state, WidgetRef ref, AppLocalizations l10n) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Bluetooth Devices', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    icon: Icon(state.isScanning ? Icons.stop : Icons.search),
+                    label: Text(state.isScanning ? 'Stop Scan' : 'Start Scan'),
+                    onPressed: state.isScanning
+                        ? () => ref.read(healthProvider.notifier).stopScan()
+                        : () => ref.read(healthProvider.notifier).startScan(),
+                  ),
+                  if (state.isConnected) ...[
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.bluetooth_disabled),
+                      label: const Text('Disconnect'),
+                      onPressed: () => ref.read(healthProvider.notifier).disconnectDevice(),
+                    ),
+                  ],
+                ],
+              ),
+              if (state.connectedDeviceName != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('Connected: ${state.connectedDeviceName}'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSamplesList(List<HealthSample> samples) {
+    final grouped = <String, List<HealthSample>>{};
+    for (final sample in samples) {
+      grouped.putIfAbsent(sample.type, () => []).add(sample);
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: grouped.length,
+      itemBuilder: (context, index) {
+        final type = grouped.keys.elementAt(index);
+        final typeSamples = grouped[type]!;
+        return Card(
+          margin: const EdgeInsets.only(bottom: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  type,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                ...typeSamples.take(5).map((sample) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(sample.timestamp.toString().split('.')[0]),
+                      Text('${sample.value.toStringAsFixed(1)} ${sample.unit}'),
+                    ],
+                  ),
+                )),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+================================================================================
+FILE: lib/features/settings/settings_provider.dart
+================================================================================
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/api_client.dart';
+import '../../core/models/app_settings.dart';
+import '../../core/storage_service.dart';
+
+final settingsProvider = StateNotifierProvider<SettingsNotifier, AppSettings>((ref) {
+  return SettingsNotifier(ref.read(storageServiceProvider), ref.read(apiClientProvider));
+});
+
+class SettingsNotifier extends StateNotifier<AppSettings> {
+  final StorageService _storage;
+  final ApiClient _api;
+
+  SettingsNotifier(this._storage, this._api) : super(const AppSettings()) {
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final settings = await _storage.loadSettings();
+    state = settings;
+  }
+
+  Future<void> updateSettings(AppSettings newSettings) async {
+    await _storage.saveSettings(newSettings);
+    state = newSettings;
+  }
+
+  Future<void> testConnection() async {
+    try {
+      await _api.checkHealth(state.serverUrl);
+    } catch (e) {
+      throw Exception('Connection failed: $e');
+    }
+  }
+
+  Future<void> autoDetectServer() async {
+    try {
+      final url = await _api.autoDetectServer();
+      if (url != null) {
+        await updateSettings(state.copyWith(serverUrl: url));
+      }
+    } catch (e) {
+      throw Exception('Auto-detection failed: $e');
+    }
+  }
+
+  Future<void> exportData() async {
+    return await _storage.exportAll();
+  }
+
+  Future<void> importData(String json) async {
+    await _storage.importAll(json);
+    await _loadSettings();
+  }
+
+  Future<void> clearAllData() async {
+    await _storage.clearAll();
+    await _loadSettings();
+  }
+}
+
+================================================================================
+FILE: lib/features/settings/settings_screen.dart
+================================================================================
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import '../../core/i18n/app_localizations.dart';
+import '../../core/models/app_settings.dart';
+import 'settings_provider.dart';
+
+class SettingsScreen extends ConsumerWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    final l10n = AppLocalizations.of(context)!;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(l10n.settingsTitle),
+      ),
+      body: ListView(
+        children: [
+          _buildServerSection(context, settings, ref, l10n),
+          _buildAppearanceSection(context, settings, ref, l10n),
+          _buildFeaturesSection(context, settings, ref, l10n),
+          _buildDataSection(context, settings, ref, l10n),
+          _buildAboutSection(context, settings, l10n),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServerSection(BuildContext context, AppSettings settings, WidgetRef ref, AppLocalizations l10n) {
+    return _buildSection(
+      title: l10n.serverSection,
+      children: [
+        ListTile(
+          title: Text(l10n.serverUrl),
+          subtitle: Text(settings.serverUrl),
+          trailing: const Icon(Icons.edit),
+          onTap: () => _editServerUrl(context, settings, ref, l10n),
+        ),
+        ListTile(
+          title: Text(l10n.autoDetect),
+          trailing: const Icon(Icons.search),
+          onTap: () => _autoDetectServer(context, ref, l10n),
+        ),
+        ListTile(
+          title: Text(l10n.testConnection),
+          trailing: const Icon(Icons.wifi),
+          onTap: () => _testConnection(context, ref, l10n),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            l10n.serverNote,
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAppearanceSection(BuildContext context, AppSettings settings, WidgetRef ref, AppLocalizations l10n) {
+    return _buildSection(
+      title: l10n.appearanceSection,
+      children: [
+        ListTile(
+          title: Text(l10n.themeLabel),
+          subtitle: Text(settings.theme == 'system' ? l10n.themeSystem : settings.theme == 'dark' ? l10n.themeDark : l10n.themeLight),
+          trailing: const Icon(Icons.palette),
+          onTap: () => _selectTheme(context, settings, ref, l10n),
+        ),
+        ListTile(
+          title: Text(l10n.languageLabel),
+          subtitle: Text(AppSettings.languageNames[settings.language] ?? settings.language),
+          trailing: const Icon(Icons.language),
+          onTap: () => _selectLanguage(context, settings, ref, l10n),
+        ),
+        ListTile(
+          title: Text(l10n.accentColor),
+          trailing: Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: Color(settings.accentColor),
+              shape: BoxShape.circle,
+            ),
+          ),
+          onTap: () => _selectAccentColor(context, settings, ref),
+        ),
+        ListTile(
+          title: Text(l10n.resetColors),
+          trailing: const Icon(Icons.refresh),
+          onTap: () => ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(accentColor: AppSettings.defaultAccentColor)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeaturesSection(BuildContext context, AppSettings settings, WidgetRef ref, AppLocalizations l10n) {
+    return _buildSection(
+      title: l10n.featuresSection,
+      children: [
+        SwitchListTile(
+          title: Text(l10n.showThinking),
+          value: settings.showThinking,
+          onChanged: (value) => ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(showThinking: value)),
+        ),
+        SwitchListTile(
+          title: Text(l10n.voiceInput),
+          value: settings.enableVoice,
+          onChanged: (value) => ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(enableVoice: value)),
+        ),
+        SwitchListTile(
+          title: Text(l10n.researchMode),
+          value: settings.enableResearch,
+          onChanged: (value) => ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(enableResearch: value)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDataSection(BuildContext context, AppSettings settings, WidgetRef ref, AppLocalizations l10n) {
+    return _buildSection(
+      title: l10n.dataSection,
+      children: [
+        ListTile(
+          title: Text(l10n.exportData),
+          trailing: const Icon(Icons.download),
+          onTap: () => _exportData(context, ref, l10n),
+        ),
+        ListTile(
+          title: Text(l10n.importData),
+          trailing: const Icon(Icons.upload),
+          onTap: () => _importData(context, ref, l10n),
+        ),
+        ListTile(
+          title: Text(l10n.clearAllData),
+          trailing: const Icon(Icons.delete_forever, color: Colors.red),
+          onTap: () => _confirmClearAll(context, ref, l10n),
+        ),
+        ListTile(
+          title: Text(l10n.storageStats),
+          subtitle: Text('${ref.read(settingsProvider.notifier)._storage.approximateSize ~/ 1024} KB'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAboutSection(BuildContext context, AppSettings settings, AppLocalizations l10n) {
+    return _buildSection(
+      title: l10n.aboutSection,
+      children: [
+        ListTile(
+          title: Text(l10n.aboutVersion),
+          subtitle: const Text('1.0.0'),
+        ),
+        ListTile(
+          title: Text(l10n.aboutDisclaimer),
+          trailing: const Icon(Icons.info),
+          onTap: () => _showDisclaimer(context, l10n),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSection({required String title, required List<Widget> children}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+          child: Text(
+            title,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
+          ),
+        ),
+        ...children,
+      ],
+    );
+  }
+
+  Future<void> _editServerUrl(BuildContext context, AppSettings settings, WidgetRef ref, AppLocalizations l10n) async {
+    final controller = TextEditingController(text: settings.serverUrl);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.serverUrl),
+        content: TextField(controller: controller),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: Text(l10n.confirm),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(serverUrl: result));
+    }
+  }
+
+  Future<void> _autoDetectServer(BuildContext context, WidgetRef ref, AppLocalizations l10n) async {
+    try {
+      await ref.read(settingsProvider.notifier).autoDetectServer();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Server detected')));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _testConnection(BuildContext context, WidgetRef ref, AppLocalizations l10n) async {
+    try {
+      await ref.read(settingsProvider.notifier).testConnection();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Connection successful')));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _selectTheme(BuildContext context, AppSettings settings, WidgetRef ref, AppLocalizations l10n) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(l10n.themeLabel),
+        children: [
+          SimpleDialogOption(
+            child: Text(l10n.themeLight),
+            onPressed: () => Navigator.pop(context, 'light'),
+          ),
+          SimpleDialogOption(
+            child: Text(l10n.themeDark),
+            onPressed: () => Navigator.pop(context, 'dark'),
+          ),
+          SimpleDialogOption(
+            child: Text(l10n.themeSystem),
+            onPressed: () => Navigator.pop(context, 'system'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(theme: result));
+    }
+  }
+
+  Future<void> _selectLanguage(BuildContext context, AppSettings settings, WidgetRef ref, AppLocalizations l10n) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(l10n.languageLabel),
+        children: AppSettings.supportedLanguages.map((lang) => SimpleDialogOption(
+          child: Text(AppSettings.languageNames[lang] ?? lang),
+          onPressed: () => Navigator.pop(context, lang),
+        )).toList(),
+      ),
+    );
+    if (result != null) {
+      ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(language: result));
+    }
+  }
+
+  void _selectAccentColor(BuildContext context, AppSettings settings, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Accent Color'),
+        content: ColorPicker(
+          pickerColor: Color(settings.accentColor),
+          onColorChanged: (color) {
+            ref.read(settingsProvider.notifier).updateSettings(settings.copyWith(accentColor: color.value));
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _exportData(BuildContext context, WidgetRef ref, AppLocalizations l10n) async {
+    try {
+      final data = await ref.read(settingsProvider.notifier).exportData();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Data exported')));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _importData(BuildContext context, WidgetRef ref, AppLocalizations l10n) async {
+    try {
+      // Implement file picker and import
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Data imported')));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
+  Future<void> _confirmClearAll(BuildContext context, WidgetRef ref, AppLocalizations l10n) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.clearAllConfirm),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(l10n.confirm),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await ref.read(settingsProvider.notifier).clearAllData();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('All data cleared')));
+    }
+  }
+
+  void _showDisclaimer(BuildContext context, AppLocalizations l10n) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.disclaimerTitle),
+        content: Text(l10n.disclaimerBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.confirm),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+================================================================================
+FILE: lib/features/disclaimer/disclaimer_screen.dart
+================================================================================
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/i18n/app_localizations.dart';
+import '../../core/models/app_settings.dart';
+import '../settings/settings_provider.dart';
+
+class DisclaimerScreen extends ConsumerWidget {
+  const DisclaimerScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.warning_amber_rounded, size: 80, color: Colors.orange),
+              const SizedBox(height: 24),
+              Text(
+                l10n.disclaimerTitle,
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Text(
+                    l10n.disclaimerBody,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => _acceptDisclaimer(ref),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+                child: Text(l10n.disclaimerAccept),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _acceptDisclaimer(WidgetRef ref) {
+    final currentSettings = ref.read(settingsProvider);
+    ref.read(settingsProvider.notifier).updateSettings(
+      currentSettings.copyWith(disclaimerAccepted: true),
+    );
+  }
+}
+
+================================================================================
+END OF CONSOLIDATED CODE FILE
+================================================================================

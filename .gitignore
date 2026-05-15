@@ -1,0 +1,42 @@
+# --- Gemma Health Edge .gitignore ---
+
+# AI Models (Too large for GitHub)
+backend/models/*.gguf
+
+# Databases (Local User Data)
+*.db
+*.db-wal
+*.db-shm
+
+# Executables & Third-party Binaries
+*.exe
+*.dll
+cloudflared
+backend/llama-server/
+
+# Python environment & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+.pytest_cache/
+.qodo/
+.sixth/
+
+# Node.js / Frontend dependencies
+node_modules/
+dist/
+.env
+package-lock.json
+
+# System / IDE
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+backend.log
+llama_server.log

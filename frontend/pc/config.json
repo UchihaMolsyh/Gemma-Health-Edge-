@@ -1,0 +1,8 @@
+{
+  "middleman_host":   "127.0.0.1",
+  "middleman_port":   8000,
+  "api_base":         "http://127.0.0.1:8000",
+  "backend_url":      "http://127.0.0.1:8080",
+  "sub_backend_url":  "http://127.0.0.1:8081",
+  "ollama_url":       "http://127.0.0.1:11434"
+}

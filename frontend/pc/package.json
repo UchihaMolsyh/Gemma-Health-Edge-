@@ -1,0 +1,25 @@
+{
+  "name": "gemma-health-edge",
+  "version": "4.0.0",
+  "description": "Fully offline multimodal health assistant powered by Gemma 4 + llama.cpp",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": true,
+  "main": "simple_server.js",
+  "directories": {
+    "test": "tests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
