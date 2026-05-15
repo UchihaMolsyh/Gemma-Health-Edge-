@@ -53,8 +53,9 @@ It's a full-stack AI health platform powered by **Google's Gemma 4 AI models** r
  │  2. 👋 Greeting Filter     ──→ if "hello/hi/hola": fast reply  │
  │       (40+ greetings across 15 languages, skips full LLM call)  │
  │                                                                  │
- │  3. 🔬 Research Engine     ──→ Wikipedia + PubMed in parallel  │
- │       (MD5-cached 2 hrs · only fires on medical keywords)       │
+ │  3. 🔬 Research Engine     ──→ Wikipedia + PubMed + RAG engine   │
+ │       in parallel (MD5-cached 2 hrs · only fires on medical       |
+ |       keywords)                                                  │
  │                                                                  │
  │  4. 🩺 Clinical Profile    ──→ "Patient: Age 34, Diabetes..."  │
  │       (injected silently into every prompt from SQLite DB)      │
@@ -97,7 +98,7 @@ It's a full-stack AI health platform powered by **Google's Gemma 4 AI models** r
 | Database | SQLite (WAL mode) | Zero config, embedded, works offline forever |
 | PC Frontend | Vanilla HTML/CSS/JS | Zero build step — open in any browser |
 | Mobile | Flutter + Dart FFI | One codebase, real native llama.cpp bindings |
-| On-device RAG | Custom inverted index (Dart) | Offline CSV health knowledge base on phone |
+| On-device RAG | Custom inverted index  | Offline CSV health knowledge base on phone and pc |
 | On-device ML | TensorFlow Lite (LiteRT) | Lightweight symptom triage on mobile |
 | Remote access | Cloudflare Tunnel | Free HTTPS link to your home AI from anywhere |
 
