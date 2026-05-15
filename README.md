@@ -1,14 +1,9 @@
-
-
 # 🏥 Gemma Health Edge
 
 **A privacy-first AI health assistant that runs 100% on your own device.**
 No cloud. No subscriptions. No one reading your health questions.
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)](.)  [![Flutter 3.7+](https://img.shields.io/badge/Flutter-3.7+-02569B?style=flat-square&logo=flutter)](.)  [![Gemma 4](https://img.shields.io/badge/Model-Gemma%204-4285F4?style=flat-square&logo=google)](.)  [![Offline](https://img.shields.io/badge/Privacy-100%25%20Offline-brightgreen?style=flat-square)](.)
-
-
----
+![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python) ![Flutter](https://img.shields.io/badge/Flutter-3.7+-02569B?style=flat-square&logo=flutter) ![Model](https://img.shields.io/badge/Model-Gemma%204-4285F4?style=flat-square&logo=google) ![Privacy](https://img.shields.io/badge/Privacy-100%25%20Offline-brightgreen?style=flat-square)
 
 ## 🎯 What is it? & Why
 
@@ -109,10 +104,10 @@ It's a full-stack AI health platform powered by **Google's Gemma 4 AI models** r
 
 ## 🎬 The Proof — Demo, Video & Core Features
 
-> 🔗 **Live Demo:** Run locally (see Run Guide below) or via Cloudflare tunnel
+> 🔗 **Live Demo Video:** 
 > 📹 **Video Walkthrough:** `[Link to demo video]`
 > 📦 **APK Download:** `build/app/outputs/flutter-apk/app-release.apk` (after `flutter build apk`)
-
+>
 ### Feature 1 — Instant Emergency Response 🚨
 Type "chest pain", "I want to kill myself", or "medical overdose" — the system **never sends these to the AI**. Instead, it instantly returns your local emergency number (911 / 999 / 112 / 000 / 119) and crisis hotlines, in under <20ms. This alone could save a life.
 
@@ -192,7 +187,27 @@ To prove our local-first thesis, we empirically benchmarked the pipeline across 
 **Minimum Requirements:** Intel i5 6th Gen or Ryzen 3000 series CPU, 16GB RAM, 12GB free disk space. No dedicated GPU required.  
 **Recommended Specification:** Intel i7 9th Gen or Ryzen 5000 series CPU, 24GB+ RAM, 20GB free space, ideally NVIDIA GPU (6GB+ VRAM).
 ---
+---
+
+## Credits & Acknowledgments
+
+**Developer**  
+- Molor Davaa — Solo developer for this project
+
+**Special Thanks**  
+- Google DeepMind — For Gemma 4 AI model  
+- Georgi Gerganov & the llama.cpp community  
+- Utsav Dey, Adil Shamim, and Palak Jain for their open datasets
+- Real Drug Dataset & FINAL FOOD DATASET (Groups 1-5)
+
+**License**  
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
+*"Making private, offline health information accessible to everyone."*
 
 > ⚠️ **Medical Disclaimer:** Gemma Health Edge provides information only — it is not a substitute for professional medical advice. Always consult a qualified healthcare professional. In an emergency, call your local emergency number (911 / 999 / 112 / 000).
-#   G e m m a - H e a l t h - E d g e -  
+#   Gemma-Health-Edge
+ 
  
