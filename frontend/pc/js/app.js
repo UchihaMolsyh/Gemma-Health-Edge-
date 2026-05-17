@@ -1,4 +1,4 @@
-/**
+/*
  * Gemma Health Edge — Main Application
  * 
  * Orchestrates the user interface, chat lifecycle, and diagnostic dashboard.
@@ -67,11 +67,10 @@
   const closeModal = (m) => m?.classList.remove('active');
 
   const updateStatus = async () => {
-    if (!GHE.Core) return;
-    const health = await fetch(`${GHE.Core.getAPIBase()}/api/v1/health`).then(r => r.json()).catch(() => null);
-    const online = !!health;
-
-    state.visionSupported = health ? health.vision_supported !== false : true;
+    const online = await fetch(`${GHE.Core.getAPIBase()}/api/v1/health`).then(r => {
+      if (!r.ok) return false;
+      return r.json().then(h => { state.visionSupported = h.vision_supported !== false; return true; }).catch(() => true);
+    }).catch(() => false);
 
     // Sidebar indicator
     const dot = els.connectionStatus;
@@ -132,18 +131,25 @@
     els.welcomeScreen.hidden = true;
     els.sessionTitle.textContent = session.title || 'Conversation';
     state.messages.forEach(renderMessage);
+    renderSessionList();
   };
 
-  const createNewSession = () => {
+  const createNewSession = async () => {
     if (state.isGenerating) {
       GHE.Core.showToast('Please wait for the response to finish.', 'info');
       return;
+    }
+    if (state.currentSession && state.messages.length > 0) {
+      state.currentSession.messages = state.messages;
+      state.currentSession.updatedAt = Date.now();
+      await GHE.Core.ChatStorage.saveSession(state.currentSession);
     }
     state.currentSession = null;
     state.messages = [];
     els.messagesContainer.innerHTML = '';
     els.welcomeScreen.hidden = false;
     els.sessionTitle.textContent = 'Gemma Health Edge';
+    await renderSessionList();
   };
 
   // ── Chat Flow ──────────────────────────────────────────────────────────────
@@ -153,8 +159,9 @@
     if (!text || state.isGenerating) return;
 
     if (!state.currentSession) {
-      state.currentSession = { id: GHE.Core.generateId(), title: text.substring(0, 30) + '...', messages: [] };
+      state.currentSession = { id: GHE.Core.generateId(), title: text.substring(0, 30) + '...', messages: [], updatedAt: Date.now() };
     }
+    state.currentSession.updatedAt = Date.now();
 
     els.messageInput.value = '';
     els.welcomeScreen.hidden = true;
@@ -162,6 +169,10 @@
     const userMsg = { id: GHE.Core.generateId(), role: 'user', content: text };
     state.messages.push(userMsg);
     renderMessage(userMsg);
+
+    state.currentSession.messages = state.messages;
+    await GHE.Core.ChatStorage.saveSession(state.currentSession);
+    renderSessionList();
 
     state.isGenerating = true;
     els.btnSend.disabled = true;
@@ -200,6 +211,7 @@
       
       state.currentSession.messages = state.messages;
       await GHE.Core.ChatStorage.saveSession(state.currentSession);
+      renderSessionList();
     } catch (e) {
       GHE.Core.showToast(e.message?.includes('503') ? 'Server busy — model still loading. Retry in a few seconds.' : e.message || 'Failed to get response.', 'error');
     } finally {
@@ -212,7 +224,6 @@
   // ── Settings & Clinical Profile ───────────────────────────────────────────
 
   const loadClinicalProfile = async () => {
-    if (!GHE.Core) return;
     const p = await GHE.Core.ClinicalProfile.get();
     if (els.clinicalAllergies)   els.clinicalAllergies.value   = p.allergies || '';
     if (els.clinicalConditions)  els.clinicalConditions.value  = p.conditions || '';
@@ -555,39 +566,43 @@
 
     // Phase 2: Setup UI state from saved config
     try {
-      // Disclaimer modal must show FIRST before any other UI
+      cacheElements();
+      restoreSettingsUI();
+      updateStatus();
+      loadClinicalProfile();
+      applyLanguage(state.lang);
+      renderCalendar();
+      renderSessionList();
+
+      // Hardware Diagnostics - prefer backend health data over WebGPU
+      fetch(`${GHE.Core.getAPIBase()}/api/v1/health`).then(r => r.json()).then(h => {
+        if (els.hwGpu) els.hwGpu.textContent = h.gpu || 'Unknown';
+        if (els.hwVram) els.hwVram.textContent = h.vram_gb ? `${h.vram_gb} GB` : 'N/A';
+        if (els.hwAccel) els.hwAccel.textContent = h.accelerator || 'CPU';
+      }).catch(() => {
+        if (GHE.Core) GHE.Core.detectGPU().then(hw => {
+          if (els.hwGpu) els.hwGpu.textContent = hw.gpu;
+          if (els.hwVram) els.hwVram.textContent = hw.vram;
+          if (els.hwAccel) els.hwAccel.textContent = hw.accel;
+        }).catch(() => {});
+      });
+
+      // Disclaimer
       if (!localStorage.getItem('ghe_disclaimer_accepted')) {
         const dm = $('disclaimer-modal');
         if (dm) dm.classList.add('active');
       }
 
-      cacheElements();
-      if (!GHE.Core) {
-        console.warn('[App] Core module unavailable — skipping UI setup. Check that core.js loaded.');
-      } else {
-        restoreSettingsUI();
-        updateStatus();
-        loadClinicalProfile();
-        applyLanguage(state.lang);
+      // Periodic checks
+      setInterval(updateStatus, 30000);
 
-        // Hardware Diagnostics - prefer backend health data over WebGPU
-        fetch(`${GHE.Core.getAPIBase()}/api/v1/health`).then(r => r.json()).then(h => {
-          if (els.hwGpu) els.hwGpu.textContent = h.gpu || 'Unknown';
-          if (els.hwVram) els.hwVram.textContent = h.vram_gb ? `${h.vram_gb} GB` : 'N/A';
-          if (els.hwAccel) els.hwAccel.textContent = h.accelerator || 'CPU';
-        }).catch(() => {
-          if (GHE.Core) GHE.Core.detectGPU().then(hw => {
-            if (els.hwGpu) els.hwGpu.textContent = hw.gpu;
-            if (els.hwVram) els.hwVram.textContent = hw.vram;
-            if (els.hwAccel) els.hwAccel.textContent = hw.accel;
-          }).catch(() => {});
-        });
-
-        // Periodic checks
-        setInterval(updateStatus, 30000);
-      }
-
-      renderCalendar();
+      // Save session on page leave
+      window.addEventListener('beforeunload', () => {
+        if (state.currentSession && state.messages.length > 0) {
+          state.currentSession.messages = state.messages;
+          GHE.Core.ChatStorage.saveSession(state.currentSession);
+        }
+      });
     } catch (e) { console.error('[App] init setup error:', e); }
   };
 
@@ -694,6 +709,16 @@
         const el=$(id); if(el)el.style.display=(id==='gemma-api-key-group'&&v==='google')||(id==='openrouter-api-key-group'&&v==='openrouter')?'':'none';
       });
       if(GHE.Core)GHE.Core.Config.set('apiMode',v);
+      
+      // Update privacy badge text based on API mode
+      const privacyText = $('privacy-text');
+      if(privacyText) {
+        if(v === 'google' || v === 'openrouter') {
+          privacyText.textContent = '☁️ Cloud API Powered';
+        } else {
+          privacyText.textContent = '🔒 100% Local & Encrypted';
+        }
+      }
     });
 
     // ── Toggle key visibility
@@ -837,6 +862,16 @@
         if (gemmaGroup) gemmaGroup.style.display = savedMode === 'google' ? '' : 'none';
         if (openrouterGroup) openrouterGroup.style.display = savedMode === 'openrouter' ? '' : 'none';
       }
+      
+      // Update privacy badge based on saved API mode
+      const privacyText = $('privacy-text');
+      if (privacyText) {
+        if (savedMode === 'google' || savedMode === 'openrouter') {
+          privacyText.textContent = '☁️ Cloud API Powered';
+        } else {
+          privacyText.textContent = '🔒 100% Local & Encrypted';
+        }
+      }
 
       // Restore saved API keys
       const savedGemmaKey = GHE.Core.Storage.get('gemma-api-key', '');
@@ -860,6 +895,25 @@
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
+  const renderSessionList = async () => {
+    const list = $('chat-history-list');
+    if (!list) return;
+    const data = await GHE.Core.ChatStorage.getSessions();
+    const sessions = Array.isArray(data) ? data : [];
+    list.innerHTML = sessions.length === 0
+      ? '<div class="empty-history" style="padding:0.8rem;color:var(--text-tertiary);font-size:0.8rem;text-align:center">No chats yet</div>'
+      : sessions.sort((a, b) => (b.updatedAt || b.id || 0) - (a.updatedAt || a.id || 0)).map(s => `
+        <div class="history-item" data-session-id="${s.id}" role="listitem" style="padding:0.5rem 0.8rem;cursor:pointer;border-bottom:1px solid var(--border-color);display:flex;align-items:center;gap:0.5rem">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.8rem">${GHE.Core.sanitizeHTML(s.title || 'Untitled')}</span>
+          <span style="font-size:0.65rem;color:var(--text-tertiary)">${s.messages?.length || 0}</span>
+        </div>
+      `).join('');
+    list.querySelectorAll('.history-item').forEach(el => {
+      el.addEventListener('click', () => loadSession(el.dataset.sessionId));
+    });
+  };
+
   GHE.App = {
     copyMessage: (id) => {
       const m = state.messages.find(msg => msg.id === id);
@@ -873,6 +927,7 @@
         state.currentSession.messages = state.messages;
         GHE.Core.ChatStorage.saveSession(state.currentSession);
       }
+      renderSessionList();
     },
     loadSession
   };
