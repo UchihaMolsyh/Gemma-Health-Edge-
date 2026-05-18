@@ -33,6 +33,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   bool _isDownloadingModel = false;
   double _downloadProgress = 0;
+  String _downloadPhase = '';
   bool _modelInstalled = false;
 
   bool _isListening = false;
@@ -48,8 +49,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // Check server health on startup
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       ref.read(chatProvider.notifier).checkServerHealth();
-      final installed = await ModelService.instance.isModelDownloaded();
-      if (mounted) setState(() => _modelInstalled = installed);
+      final modelOk = await ModelService.instance.isModelDownloaded();
+      final libOk = await ModelService.instance.isLibraryDownloaded();
+      if (mounted) setState(() => _modelInstalled = modelOk && libOk);
     });
 
     // Start periodic health checks every 2 minutes
@@ -644,12 +646,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Downloading Gemma 4-E2B AI: ${(_downloadProgress * 100).toStringAsFixed(0)}%',
+                          _downloadPhase.isNotEmpty ? _downloadPhase : 'Downloading...',
                           style: const TextStyle(fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${(_downloadProgress * 100).toStringAsFixed(0)}%',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                         ),
                       ],
                     )
-                  : ElevatedButton.icon(
+                    : ElevatedButton.icon(
                       onPressed: _startModelDownload,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: accentColor.withOpacity(0.1),
@@ -659,7 +666,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       icon: const Icon(Icons.download_for_offline_outlined),
-                      label: Text('Install Gemma 4-E2B Model'),
+                      label: Text('Install Gemma 4-E2B (Model + Engine)'),
                     ),
             ] else
               Container(
@@ -691,19 +698,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     setState(() {
       _isDownloadingModel = true;
       _downloadProgress = 0;
+      _downloadPhase = 'Preparing...';
     });
 
+    // Download llama.cpp library first, then the model
+    await ModelService.instance.downloadLlamaLibrary(
+      onProgress: (p) => setState(() {
+        _downloadPhase = 'Downloading llama.cpp engine...';
+        _downloadProgress = p * 0.1;
+      }),
+      onComplete: (libSuccess, libError) {
+        if (!libSuccess) {
+          debugPrint('[ChatScreen] Library download failed (non-fatal): $libError');
+        }
+        // Continue with model download regardless
+      },
+    );
+
+    if (!mounted) return;
+
     await ModelService.instance.downloadModel(
-      onProgress: (p) => setState(() => _downloadProgress = p),
+      onProgress: (p) => setState(() {
+        _downloadPhase = 'Downloading AI model (3.2 GB)...';
+        _downloadProgress = 0.1 + p * 0.9;
+      }),
       onComplete: (success, error) {
         if (mounted) {
           setState(() {
             _isDownloadingModel = false;
             _modelInstalled = success;
+            _downloadPhase = '';
           });
           if (success) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Clinical AI Model Installed Successfully')),
+              SnackBar(content: Text('Clinical AI Engine Installed Successfully')),
             );
           } else {
             ScaffoldMessenger.of(context).showSnackBar(
