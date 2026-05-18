@@ -788,7 +788,7 @@ class ChatNotifier extends Notifier<ChatState> {
         // ON-DEVICE AI
         if (_settings.localAiType == 'llama_cpp') {
           final ctx = await ref.read(llamaCppServiceProvider).getContext(
-            modelPath: 'assets/models/gemma-4-Q4_K_M.gguf',
+            modelPath: '',
             nCtx: 2048,
           );
         
