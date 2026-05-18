@@ -173,7 +173,7 @@ class LlamaCppLibrary {
   static Future<bool> loadLibrary() async {
     if (_loaded) return true;
 
-    final searchPaths = _getSearchPaths();
+    final searchPaths = await _getSearchPaths();
 
     for (final path in searchPaths) {
       try {
@@ -196,8 +196,25 @@ class LlamaCppLibrary {
     return false;
   }
 
-  static List<String> _getSearchPaths() {
+  static Future<List<String>> _getSearchPaths() async {
     final paths = <String>[];
+
+    // Downloaded library in app documents directory (from ModelService)
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      if (Platform.isAndroid) {
+        paths.add('${directory.path}/llama/libllama.so');
+      } else if (Platform.isIOS) {
+        paths.add('${directory.path}/llama/libllama.dylib');
+      } else if (Platform.isMacOS) {
+        paths.add('${directory.path}/llama/libllama.dylib');
+      } else if (Platform.isWindows) {
+        paths.add('${directory.path}/llama/llama.dll');
+      } else {
+        paths.add('${directory.path}/llama/libllama.so');
+      }
+    } catch (_) {}
+
     if (Platform.isWindows) {
       paths.addAll([
         'llama.dll',
@@ -301,17 +318,21 @@ class LlamaCppContext {
     if (finalPath.isEmpty) {
       try {
         final directory = await getApplicationDocumentsDirectory();
-        finalPath = '${directory.path}/models/gemma-4-Q4_K_M.gguf';
+        finalPath = '${directory.path}/models/gemma-4-E2B-it-IQ4_NL.gguf';
         if (!await File(finalPath).exists()) {
-          // Try assets path
-          finalPath = 'assets/models/gemma-4-Q4_K_M.gguf';
+          // Try legacy model name
+          finalPath = '${directory.path}/models/gemma-4-Q4_K_M.gguf';
           if (!await File(finalPath).exists()) {
-            // Fallback to legacy path
-            finalPath = 'models/gemma-4-Q4_K_M.gguf';
+            // Try assets path
+            finalPath = 'assets/models/gemma-4-E2B-it-IQ4_NL.gguf';
+            if (!await File(finalPath).exists()) {
+              // Fallback to legacy path
+              finalPath = 'models/gemma-4-E2B-it-IQ4_NL.gguf';
+            }
           }
         }
       } catch (e) {
-        finalPath = 'assets/models/gemma-4-Q4_K_M.gguf';
+        finalPath = 'assets/models/gemma-4-E2B-it-IQ4_NL.gguf';
       }
     }
 
@@ -621,7 +642,7 @@ class LlamaCppService {
 
   Future<LlamaCppContext> getContext({
     String id = 'default',
-    String modelPath = 'models/gemma-4-Q4_K_M.gguf',
+    String modelPath = '',
     int nCtx = 2048,
   }) async {
     if (!_contexts.containsKey(id)) {
