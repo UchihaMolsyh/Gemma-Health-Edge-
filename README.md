@@ -194,6 +194,42 @@ To prove our local-first thesis, we empirically benchmarked the pipeline across 
 
 ---
 
+# Known Issues
+
+### Frontend
+*   Chat history occasionally requires a hard refresh to display correctly (Ctrl+Shift+R or Ctrl+F5).
+*   Chat scroll jumps on long conversations.
+*   UI is still rough in some browser environments; polish ongoing.
+
+### Backend
+*   Ollama backend streaming occasionally freezes or cuts off mid-response on very long answers.
+
+### Mobile App
+*   Experimental; model loading can fail on older or low-RAM phones.
+*   LiteRT generative inference is currently disabled pending stable Gemma 4 weights.
+
+### Hardware / Performance
+*   CPU-only mode: time-to-first-token can reach 100–150 seconds on long prompts.
+*   Low-spec devices (8GB RAM or older CPUs) will be slower than benchmarked profiles.
+
+### Research Engine
+*   Wikipedia and PubMed only activate when online and when the prompt contains medical keywords.
+*   20-second timeout; if sources don't respond in time, the model falls back to its own knowledge and offline RAG.
+
+---
+
+> [!NOTE]
+> Core safety features, emergency detection, and local inference are reliable on modern hardware. All frontend issues are documented and planned for improvement post-submission.
+
+#Found a bug or have feedback? Open an issue on GitHub or email me at [nmolor20@gmail.com]. I maintain this project and plan to update it regularly, though updates may be infrequent due to school commitments etc.
+
+---
+
+##Origin
+ Gemma Health Edge started two months before this hackathon as a personal project built on Qwen 2.5 — an attempt to make private, offline health information accessible without cloud dependencies. When the Gemma 4 Good Hackathon launched, the architecture was already taking shape. Switching to Gemma 4 and pushing it to completion felt like the right thing to do.
+
+---
+
 ## Credits & Acknowledgments
 
 **Developer**  
