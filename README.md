@@ -80,8 +80,8 @@ It's a full-stack AI health platform powered by **Google's Gemma 4 AI models** r
    │  llama-server   │ │ port 11434   │ │  Studio API    │ │  API     │
    │  port 8081      │ │              │ │                │ │          │
    │  Gemma 4 E4B    │ │  gemma4 /    │ │ gemma-4-e4b   │ │google/   │
-   │  Q4_K_M GGUF    │ │  gemma-4-9b  │ │ gemma-4-9b    │ │gemma-4   │
-   │  5.3 GB model   │ │  local only  │ │ gemma-4-27b   │ │-27b      │
+   │  Q4_K_M GGUF    │ │  gemma-4-e4b  │ │ gemma-4-31b    │ │gemma-4   │
+   │  5.3 GB model   │ │  local only  │ │ gemma-4-26b-a4b │ │-27b      │
    │  32K context    │ │              │ │ cloud API     │ │cloud only│
    │  vision mmproj  │ │              │ │ your API key  │ │your key  │
    └─────────────────┘ └──────────────┘ └────────────────┘ └──────────┘
@@ -106,8 +106,8 @@ It's a full-stack AI health platform powered by **Google's Gemma 4 AI models** r
 
 ## 🎬 The Proof — Demo, Video & Core Features
 
-> 🔗 **Live Demo Video:** [Coming soon]
-> 📹 **Video Walkthrough:** [Link to demo video]
+> 🔗 **Live Demo Video:** [https://www.youtube.com/watch?v=OsGpRueKThg&t=23s]
+> 📹 **Video Walkthrough:** [https://www.youtube.com/watch?v=LpMEwq5BiSs&t=11s]
 > 📦 **APK Download:** `build/app/outputs/flutter-apk/app-release.apk` (after `flutter build apk`)
 
 ### Feature 1 — Instant Emergency Response 🚨
