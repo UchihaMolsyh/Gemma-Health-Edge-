@@ -1,4 +1,4 @@
-# 🏥 Gemma Health Edge
+# 🏥 Gemma Health Edge v2.6.0
 
 **A privacy-first AI health assistant that runs 100% on your own device.**
 No cloud. No subscriptions. No one reading your health questions.
