@@ -193,8 +193,42 @@ To prove our local-first thesis, we empirically benchmarked the pipeline across 
 **Recommended Specification:** Intel i7 9th Gen or Ryzen 5000 series CPU, 24GB+ RAM, 20GB free space, ideally NVIDIA GPU (6GB+ VRAM).
 
 ---
+# Project Roadmap & Version Tracks
 
-# Known Issues
+## 📍 [v2.6.0] — Current Active Version (Hackathon Submission)
+
+* **Dual-Frontend UI System:** Implemented functional Vanilla JS Glassmorphism web dashboards and initial experimental Flutter mobile layouts.
+* **Multi-Engine Intermediary Pipeline:** Built a centralized FastAPI middleman layer performing real-time structural processing (Emergency Regex Parsing, Greeting Interception, SQLite Session Persistence in WAL mode).
+* **Parallel Multi-Source Grounding:** Functional Wikipedia and PubMed scraping loops configured to inject raw data vectors into local inference context arrays.
+* **Hardware Baseline Verification:** Formally profiled execution performance indices across low-tier, mid-tier, and specialized CPU configurations.
+
+---
+  
+## 🚀 [v3.0.0] — Next Major Milestone (Codename: Chrysoberyl)
+**Target Release Date:** November 2026-February 2027
+
+## 🛠️ Will Be Fixed (Stability Bugs)
+
+* **Mobile App OOM Crashes:** Eradicate application process terminating memory leaks during deep multi-turn chat sessions through active heap space polling loops.
+* **UI Thread Locking:** Re-architect chunk ingestion to stream text tokens smoothly, fixing visual interface stuttering and element locks across major web engines.
+* **Session State Corruption:** Correct edge cases where immediate process kills or unhandled server exceptions corrupt conversation histories.
+* **KV Cache Edge Handling:** Fix initialization sequence bugs that occasionally crash weight loaders running without static structural pre-allocations.
+
+## ➕ Will Be Added (New Capabilities)
+
+* **LiteRT Mobile Backend Acceleration:** Re-enable mobile-native execution by natively configuring the LiteRT-LM orchestration layer for direct edge acceleration on device chipsets.
+* **Unified Engine Interface Abstraction:** Implement an explicit `BaseHealthEngine` interface pattern to streamline dynamic switches between desktop nodes and local mobile compilation runtimes.
+* **Hardware State Fail-safes:** Write thermal level and battery polling integrations to intelligently adapt max context windows or token frequencies when a device throttles.
+* **Inference Guardrail Compilations:** Embed strict, non-bypassable medical rules directly into code level prompt wrappers, protecting local endpoints against malicious injection vectors.
+
+## 📈 Will Be Improved (Performance Optimizations)
+
+* **Weight Memory Footprint Culling:** Compress runtime memory parameters under 1 GB using production-tuned 4-bit and 8-bit mobile weight allocation matrices.
+* **Sliding Window Context Allocation:** Upgrade past basic line clipping strategies to a rolling sliding window algorithm to protect system limits while maintaining critical chat contexts.
+* **Operational Variable Decoupling:** Purge internal hardcoded parameters from core modules, migrating generation options like temperatures and context sizes into standalone configuration engines (`.env`/`config.json`).
+---
+
+# Known Issues in GHE v2.6.0
 
 ### Frontend
 *   Chat history occasionally requires a hard refresh to display correctly (Ctrl+Shift+R or Ctrl+F5).
